@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>THE CHILDREN OF ARASAKA</title>
+    <link rel="icon" href="data:," />
+    <script type="module" crossorigin src="/assets/index-FSwiD7xG.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-Bc2Bz9XF.css">
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="scene"></canvas>
+
+      <!-- LOGIN -->
+      <section id="screen-login" class="screen">
+        <div class="scanlines"></div>
+        <div class="panel login-panel">
+          <h1 class="glitch" data-text="ARASAKA">ARASAKA</h1>
+          <p class="subtitle">THE CHILDREN OF ARASAKA // NET-ACCESS TERMINAL</p>
+          <form id="login-form">
+            <label class="field">
+              <span>HANDLE</span>
+              <input id="input-name" type="text" maxlength="16" placeholder="e.g. LUCY" autocomplete="off" required />
+            </label>
+            <div class="field">
+              <span>HAIR</span>
+              <div class="swatches" id="swatch-hair"></div>
+            </div>
+            <div class="field">
+              <span>JACKET</span>
+              <div class="swatches" id="swatch-jacket"></div>
+            </div>
+            <button type="submit" class="btn btn-primary">JACK IN</button>
+          </form>
+          <p class="hint">An original Night City netrunner story inspired by Lucy's world. No account needed — just a handle.</p>
+        </div>
+      </section>
+
+      <!-- START MENU -->
+      <section id="screen-menu" class="screen hidden">
+        <div class="scanlines"></div>
+        <div class="panel menu-panel">
+          <h1 class="title-sm">THE CHILDREN <span>OF ARASAKA</span></h1>
+          <p class="welcome" id="menu-welcome"></p>
+          <nav class="menu-nav">
+            <button class="btn btn-primary" id="btn-play">PLAY</button>
+            <button class="btn" id="btn-controls">CONTROLS</button>
+            <button class="btn" id="btn-credits">REFERENCE / CREDITS</button>
+          </nav>
+          <p class="players-online" id="players-online">— players jacked in</p>
+        </div>
+      </section>
+
+      <!-- CONTROLS MODAL -->
+      <section id="screen-controls" class="screen hidden">
+        <div class="panel controls-panel">
+          <h2>CONTROLS</h2>
+          <ul class="controls-list">
+            <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>Move</span></li>
+            <li><kbd>Shift</kbd><span>Sprint</span></li>
+            <li><kbd>Space</kbd><span>Jump</span></li>
+            <li><kbd>Mouse</kbd><span>Look (click to lock cursor)</span></li>
+            <li><kbd>Scroll</kbd><span>Zoom camera</span></li>
+            <li><kbd>E</kbd><span>Interact</span></li>
+            <li><kbd>Enter</kbd><span>Chat</span></li>
+            <li><kbd>Esc</kbd><span>Pause / release cursor</span></li>
+          </ul>
+          <button class="btn btn-primary" id="btn-controls-back">BACK</button>
+        </div>
+      </section>
+
+      <!-- CREDITS MODAL -->
+      <section id="screen-credits" class="screen hidden">
+        <div class="panel controls-panel">
+          <h2>REFERENCE</h2>
+          <p>
+            "The Children of Arasaka" is an original story inspired by the tone of <em>Cyberpunk: Edgerunners</em>
+            (Studio Trigger / CD PROJEKT RED). Lucy, Mara, Noah, Sera, Kian, and the world here are original
+            creations in a similar spirit — not the show's actual assets or dialogue.
+          </p>
+          <p>If you enjoyed the vibe, go watch the real thing on Netflix.</p>
+          <button class="btn btn-primary" id="btn-credits-back">BACK</button>
+        </div>
+      </section>
+
+      <!-- HUD (in-game) -->
+      <div id="hud" class="hidden">
+        <div class="hud-top-left">
+          <div class="act-badge" id="hud-act">ACT I</div>
+          <div class="location" id="hud-location"></div>
+          <div class="objective" id="hud-objective">Objective: —</div>
+        </div>
+        <div class="hud-top-right" id="hud-roster"></div>
+        <div class="crosshair"></div>
+        <div class="prompt hidden" id="hud-prompt"><kbd>E</kbd> <span id="hud-prompt-text"></span></div>
+        <div class="dialogue-box hidden" id="hud-dialogue">
+          <div class="dialogue-speaker" id="dialogue-speaker"></div>
+          <div class="dialogue-text" id="dialogue-text"></div>
+          <div class="dialogue-hint" id="dialogue-hint">[E] Continue</div>
+        </div>
+        <div class="chat-log" id="chat-log"></div>
+        <form id="chat-form" class="chat-form hidden">
+          <input id="chat-input" maxlength="140" autocomplete="off" placeholder="Say something... (Enter to send, Esc to cancel)" />
+        </form>
+        <div class="hint-bottom">Enter: Chat &nbsp;•&nbsp; Esc: Pause</div>
+      </div>
+
+      <!-- PAUSE -->
+      <section id="screen-pause" class="screen hidden">
+        <div class="panel">
+          <h2>PAUSED</h2>
+          <nav class="menu-nav">
+            <button class="btn btn-primary" id="btn-resume">RESUME</button>
+            <button class="btn" id="btn-quit">QUIT TO MENU</button>
+          </nav>
+        </div>
+      </section>
+
+      <!-- ACT TRANSITION / ENDING -->
+      <section id="screen-act" class="screen hidden">
+        <div class="scanlines"></div>
+        <div class="panel act-panel">
+          <div class="act-eyebrow" id="act-eyebrow">ACT I COMPLETE</div>
+          <h2 class="act-title" id="act-title"></h2>
+          <p class="act-message" id="act-message"></p>
+          <blockquote class="act-reference" id="act-reference"></blockquote>
+          <button class="btn btn-primary" id="btn-act-continue">CONTINUE</button>
+        </div>
+      </section>
+
+      <div id="loading" class="screen">
+        <div class="loader">BOOTING NET-RUNNER INTERFACE…</div>
+      </div>
+    </div>
+  </body>
+</html>
