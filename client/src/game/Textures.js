@@ -348,6 +348,54 @@ export function drawingTexture(key) {
   });
 }
 
+/** A printed sheet of dumped shard data — hex offsets and garbled fragments, curling at the edges. */
+export function dataSheetTexture(key) {
+  return memo(`datasheet:${key}`, () => {
+    const size = 256;
+    const cv = canvas(size);
+    const ctx = cv.getContext("2d");
+    const rnd = rand(hashStr(key) + 61);
+
+    ctx.fillStyle = "#9c9478";
+    ctx.fillRect(0, 0, size, size);
+    ctx.globalAlpha = 0.08;
+    for (let i = 0; i < 500; i++) {
+      ctx.fillStyle = rnd() > 0.5 ? "#000" : "#5c4c30";
+      ctx.fillRect(rnd() * size, rnd() * size, 1, 1);
+    }
+    ctx.globalAlpha = 1;
+
+    ctx.fillStyle = "#1a1a1a";
+    ctx.font = "bold 11px monospace";
+    ctx.fillText("SHARD_DUMP.LOG", 10, 18);
+    ctx.strokeStyle = "#1a1a1a";
+    ctx.globalAlpha = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(10, 24);
+    ctx.lineTo(size - 10, 24);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    const hex = "0123456789ABCDEF";
+    ctx.font = "9px monospace";
+    for (let i = 0; i < 14; i++) {
+      const y = 38 + i * 14;
+      ctx.fillStyle = rnd() > 0.85 ? "#9a1414" : "#2a2a2a";
+      ctx.globalAlpha = 0.6 + rnd() * 0.4;
+      let addr = "";
+      for (let j = 0; j < 4; j++) addr += hex[Math.floor(rnd() * 16)];
+      let bytes = "";
+      for (let j = 0; j < 6; j++) bytes += hex[Math.floor(rnd() * 16)] + hex[Math.floor(rnd() * 16)] + " ";
+      ctx.fillText(`${addr}: ${bytes}`, 10, y);
+    }
+    ctx.globalAlpha = 1;
+
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  });
+}
+
 // --- Act I "SAVE US" props -------------------------------------------------
 // Both the note Lucy finds on the floor and the writing that only shows up
 // once the apartment turns red are the same handwriting, so they share one

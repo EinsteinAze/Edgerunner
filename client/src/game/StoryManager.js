@@ -31,8 +31,13 @@ export const ACTS = {
         anchor: "dataShards",
         radius: 2,
         trigger: "interact",
-        prompt: "Examine old data shards",
-        lines: [{ speaker: NARR, text: "Old personal data shards. Fragments of a life before all this." }],
+        prompt: "Examine the old data printouts",
+        lines: [
+          { speaker: NARR, text: "A small table cluttered with printed shard dumps — hex offsets, corrupted headers, whatever survived the recovery." },
+          { speaker: L, text: '"...0x4F2A: fragment corrupt. 0x4F3E: fragment corrupt. Half of this is just noise."' },
+          { speaker: L, text: '"Come on, there has to be something left in here."' },
+          { speaker: NARR, text: "Lucy sighs and lets the sheet fall back onto the pile. Fragments of a life before all this, and none of them whole." },
+        ],
       },
       {
         id: "bloodNote",

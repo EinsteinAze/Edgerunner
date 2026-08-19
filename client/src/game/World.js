@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { buildCharacter, makeHologram } from "./CharacterModel.js";
-import { grungeSet, metalSet, floorSet, screenTexture, warningSignTexture, drawingTexture, bloodNoteTexture, bloodScrawlTexture } from "./Textures.js";
+import { grungeSet, metalSet, floorSet, screenTexture, warningSignTexture, drawingTexture, bloodNoteTexture, bloodScrawlTexture, dataSheetTexture } from "./Textures.js";
 import { trySwapForAsset, spawnAsset } from "./AssetLoader.js";
 
 // ---------------------------------------------------------------------------
@@ -322,6 +322,54 @@ function addDesk(scene, colliders, { x, z, ry = 0, key }) {
   const seatZ = z - 0.5 * Math.sin(ry);
   addBox(scene, colliders, { w: 0.4, h: 0.06, d: 0.4, x: seatX, y: 0.46, z: seatZ, mat: chairMat, ry, collide: false });
   addBox(scene, colliders, { w: 0.4, h: 0.5, d: 0.06, x: seatX - 0.2 * Math.cos(ry), z: seatZ - 0.2 * Math.sin(ry), y: 0.72, mat: chairMat, ry, collide: false });
+}
+
+/**
+ * Small side table stacked with printed shard dumps — the old data shards
+ * prop, replacing what used to be a single glowing box. Modeled on
+ * `addDesk`'s top-plate + 4-leg composition, just smaller, with a scatter of
+ * paper planes (see `addBloodNote`) lying flat across the top instead of a
+ * chair. Returns a group so callers can use it directly as a position anchor
+ * (`anchor.position` — see Interactables.js).
+ */
+function addDataShardTable(scene, colliders, { x, z, ry = 0, key }) {
+  const group = new THREE.Group();
+  group.position.set(x, 0, z);
+  group.rotation.y = ry;
+  scene.add(group);
+
+  const topH = 0.68;
+  const topMat = metalMat("#241f1a", `shardtable:${key}`, { rough: 0.6, metal: 0.15 });
+  const top = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.05, 0.5), topMat);
+  top.position.set(0, topH, 0);
+  top.castShadow = true;
+  top.receiveShadow = true;
+  group.add(top);
+  colliders.push({ mesh: top, x, z, hw: 0.35, hd: 0.25, ry });
+
+  const legMat = metalMat("#141210", `shardtablelegs:${key}`, { rough: 0.5, metal: 0.5 });
+  for (const [lx, lz] of [[-0.3, -0.2], [0.3, -0.2], [-0.3, 0.2], [0.3, 0.2]]) {
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.045, topH, 0.045), legMat);
+    leg.position.set(lx, topH / 2, lz);
+    leg.castShadow = true;
+    group.add(leg);
+  }
+
+  const sheetMat = (i) => new THREE.MeshStandardMaterial({ map: dataSheetTexture(`${key}:${i}`), color: "#b0ab98", roughness: 0.95, metalness: 0, side: THREE.DoubleSide });
+  const sheets = [
+    { dx: -0.08, dz: -0.05, rot: 0.18, w: 0.26, h: 0.32 },
+    { dx: 0.1, dz: 0.06, rot: -0.3, w: 0.24, h: 0.3 },
+    { dx: -0.02, dz: 0.12, rot: 0.5, w: 0.22, h: 0.28 },
+  ];
+  sheets.forEach((s, i) => {
+    const sheet = new THREE.Mesh(new THREE.PlaneGeometry(s.w, s.h), sheetMat(i));
+    sheet.rotation.set(-Math.PI / 2, 0, s.rot);
+    sheet.position.set(s.dx, topH + 0.03 + i * 0.003, s.dz);
+    sheet.receiveShadow = true;
+    group.add(sheet);
+  });
+
+  return group;
 }
 
 /**
@@ -842,7 +890,7 @@ export function createWorld(scene, cameraColliders = []) {
 
   anchors.bed = addPropBox(act1Group, colliders, { x: 3.4, y: 0.35, z: 6.5, w: 2, h: 0.7, d: 3, color: "#332845", key: "bed" });
   addBox(act1Group, colliders, { w: 2, h: 0.15, d: 0.8, x: 3.4, y: 0.78, z: 5.3, mat: metalMat("#443458", "pillow", { rough: 0.8, metal: 0 }), collide: false });
-  anchors.dataShards = addPropBox(act1Group, colliders, { x: 3.6, y: 0.9, z: 3.2, w: 0.8, h: 0.4, d: 0.6, color: "#f6e94a", emissive: true, collide: false, key: "shards" });
+  anchors.dataShards = addDataShardTable(act1Group, colliders, { x: 3.6, z: 3.2, ry: 0.3, key: "shards" });
   anchors.cyberdeck = addPropBox(act1Group, colliders, { x: -2.4, y: 0.55, z: -1, w: 1.4, h: 1.1, d: 0.8, color: "#ff2fd0", emissive: true, key: "cyberdeck" });
   addMonitor(act1Group, { x: -2.4, y: 1.1, z: -1.42, ry: Math.PI, key: "cyberdeck-screen", title: "NET-ACCESS", color: "#ff2fd0", accent: "#18e0e0", standH: 0.4 });
   anchors.mainDesk = new THREE.Vector3(-2.4, 0, -0.5);
