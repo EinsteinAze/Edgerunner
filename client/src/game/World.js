@@ -37,6 +37,7 @@ function floorMat(color, key) {
 
 const CITY_VIEW_TEXTURE = "/models/textures/city_view.png";
 const NAME_WALL_TEXTURE = "/models/textures/namedwall.png";
+const ARASAKA_LOGO_TEXTURE = "/models/textures/arasaka_logo.png.jpeg";
 
 function applyTextureMap(mesh, url) {
   const textureLoader = new THREE.TextureLoader();
@@ -56,6 +57,26 @@ function applyTextureMap(mesh, url) {
         material.roughness = 0.82;
         material.needsUpdate = true;
       }
+    },
+    undefined,
+    (error) => console.warn(`[World] Could not load texture: ${url}`, error)
+  );
+}
+
+function applyStandardTextureMap(mesh, url) {
+  const textureLoader = new THREE.TextureLoader();
+  textureLoader.load(
+    url,
+    (texture) => {
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.needsUpdate = true;
+      const makeMaterial = () => new THREE.MeshStandardMaterial({
+        color: "#ffffff",
+        map: texture,
+        roughness: 0.48,
+        metalness: 0.35,
+      });
+      mesh.material = Array.isArray(mesh.material) ? mesh.material.map(makeMaterial) : makeMaterial();
     },
     undefined,
     (error) => console.warn(`[World] Could not load texture: ${url}`, error)
@@ -440,6 +461,80 @@ function addContainer(scene, colliders, { x, z, ry = 0, key, color = "#2c3a2c", 
   addWarningSign(scene, { x: x + 0.46 * Math.cos(ry), y: 0.5, z: z + 0.46 * Math.sin(ry), ry: ry + Math.PI / 2, text: "TOXIC" });
 }
 
+/** Act II prop spawner with a collision-safe procedural fallback. */
+function createAct2PropSpawner(act2Group, colliders) {
+  return ({ model, x, y = 0, z, ry = 0, scale = 1, w = 1, h = 1, d = 1, color = "#181b25", key }) => {
+    const fallback = addBox(act2Group, colliders, {
+      w, h, d, x, y: y + h / 2, z, ry,
+      mat: metalMat(color, `act2:${key}`, { rough: 0.48, metal: 0.72 }),
+    });
+
+    // Imported meshes are shadow-configured by spawnAsset and remain under
+    // act2Group, so they cannot appear until Act II is unlocked.
+    spawnAsset(`${PROPS}/${model}.glb`, {
+      position: [x, y, z], rotationY: ry, scale, castShadow: true, receiveShadow: true,
+    }).then((inst) => {
+      if (!inst) return;
+      fallback.visible = false;
+      act2Group.add(inst.root);
+    });
+    return fallback;
+  };
+}
+
+function addAct2FloorMarkings(group) {
+  const stripeMat = new THREE.MeshStandardMaterial({ color: "#d39432", emissive: "#4a2108", emissiveIntensity: 0.35, roughness: 0.62, metalness: 0.25 });
+  const laneMat = new THREE.MeshStandardMaterial({ color: "#3a2c1b", roughness: 0.75, metalness: 0.15 });
+  for (const x of [-2.15, 2.15]) {
+    const lane = new THREE.Mesh(new THREE.PlaneGeometry(0.12, 38), laneMat);
+    lane.rotation.x = -Math.PI / 2;
+    lane.position.set(x, 0.012, -26);
+    lane.receiveShadow = true;
+    group.add(lane);
+  }
+  for (let z = -9; z >= -42; z -= 5.5) {
+    for (const x of [-2.15, 2.15]) {
+      const stripe = new THREE.Mesh(new THREE.PlaneGeometry(0.48, 0.14), stripeMat);
+      stripe.rotation.x = -Math.PI / 2;
+      stripe.position.set(x, 0.016, z);
+      stripe.receiveShadow = true;
+      group.add(stripe);
+    }
+  }
+}
+
+function addAct2EmergencyLight(group, flickerList, { x, y, z }) {
+  const fixture = new THREE.Group();
+  fixture.position.set(x, y, z);
+  group.add(fixture);
+  const cage = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.16, 12), metalMat("#25143b", "act2-emergency-cage", { rough: 0.35, metal: 0.8 }));
+  fixture.add(cage);
+  const lens = new THREE.Mesh(new THREE.SphereGeometry(0.13, 12, 8), neonMat("#a855f7", 1.6));
+  lens.scale.y = 0.6;
+  lens.position.y = -0.1;
+  fixture.add(lens);
+  const warning = new THREE.PointLight("#a855f7", 3.5, 18, 2);
+  warning.position.set(x, y, z);
+  group.add(warning);
+  flickerList.push({ light: warning, glow: lens, owner: group, base: 3.5, glowBase: 0.72, speed: 2.3, seed: 0.7, broken: false, siren: true });
+  return warning;
+}
+
+function addAct2SparkNode(group, crackleList) {
+  const sparkNode = new THREE.Group();
+  sparkNode.name = "Spark_Node";
+  sparkNode.position.set(0.5, 2.05, -27);
+  group.add(sparkNode);
+
+  const glow = new THREE.Mesh(
+    new THREE.SphereGeometry(0.055, 8, 6),
+    new THREE.MeshBasicMaterial({ color: "#c084fc", transparent: true, opacity: 0 })
+  );
+  const light = new THREE.PointLight("#c084fc", 0, 4, 2);
+  sparkNode.add(glow, light);
+  crackleList.push({ owner: group, glow, light, nextBurst: 0, burstEnds: 0 });
+}
+
 // ---------------------------------------------------------------------------
 // optional environment/prop GLB assets — wired into the priority zones
 // (Facility, Flashback Corridor, Archive, Data Core) per the visual-asset
@@ -464,6 +559,7 @@ const MODEL = {
 const ENV = "/models/environment";
 const ENV_MODEL = {
   lucyApartmentDecor: `${ENV}/lucy-apartment-decor.glb`,
+  act2Facility: `${ENV}/act2-facility.glb`,
   world: `${ENV}/world.glb`,
 };
 
@@ -478,6 +574,40 @@ const ENV_MODEL = {
 function addSetDressing(scene, url, { anchor = [0, 0, 0], rotationY = 0, scale = 1 } = {}) {
   spawnAsset(url, { position: anchor, rotationY, scale }).then((inst) => {
     if (inst) scene.add(inst.root);
+  });
+}
+
+/**
+ * Loads the authored facility as a child of Act II. `spawnAsset` uses the
+ * shared GLTFLoader and configures every imported mesh for cast/receive
+ * shadows; the procedural room remains as a collision-safe fallback.
+ */
+function addAct2Facility(act2Group, nameWallFallback) {
+  spawnAsset(ENV_MODEL.act2Facility, {
+    position: [0, 0, -26],
+    castShadow: true,
+    receiveShadow: true,
+  }).then((inst) => {
+    if (!inst) return;
+    let hasAuthoredNameWall = false;
+    inst.root.traverse((node) => {
+      if (node.isMesh) {
+        node.castShadow = true;
+        node.receiveShadow = true;
+      }
+      if (node.name === "Mission_NameWall_Backing" && node.isMesh) {
+        hasAuthoredNameWall = true;
+        applyTextureMap(node, NAME_WALL_TEXTURE);
+      }
+      if (node.isMesh && node.name.startsWith("Arasaka_Logo")) {
+        applyStandardTextureMap(node, ARASAKA_LOGO_TEXTURE);
+      }
+    });
+    // The authored backing is the sole visible name-wall surface. Keep the
+    // procedural object as a collider/interaction fallback only when an
+    // older or incomplete facility export does not include that named mesh.
+    if (hasAuthoredNameWall && nameWallFallback) nameWallFallback.visible = false;
+    act2Group.add(inst.root);
   });
 }
 
@@ -618,6 +748,9 @@ export function createWorld(scene, cameraColliders = []) {
   const colliders = [];
   const gates = {};
   const anchors = {};
+  const act1Group = new THREE.Group();
+  act1Group.name = "act1Group";
+  scene.add(act1Group);
   // Everything created for the facility (geometry, practical lights, props,
   // and story anchors) is parented here. It remains invisible until Act I is
   // complete, preventing the facility from bleeding into the apartment.
@@ -625,9 +758,10 @@ export function createWorld(scene, cameraColliders = []) {
   act2Group.name = "act2Group";
   act2Group.visible = false;
   scene.add(act2Group);
-  const actGroups = { 2: act2Group };
+  const actGroups = { 1: act1Group, 2: act2Group };
   const holograms = [];
   const flickerList = [];
+  const crackleList = [];
   const blinkers = [];
   const props = {};
   const apartmentAlarm = createApartmentAlarm();
@@ -658,7 +792,7 @@ export function createWorld(scene, cameraColliders = []) {
   scene.add(cyanRim);
   const magentaAccent = new THREE.PointLight("#ff007f", 7, 12, 2);
   magentaAccent.position.set(3.5, 3, 1.5);
-  scene.add(magentaAccent);
+  act1Group.add(magentaAccent);
   // This one sits inside the apartment, so it turns with the room — a magenta
   // key light left standing would fight the red instead of feeding it.
   registerAlarmLight(apartmentAlarm, magentaAccent);
@@ -675,7 +809,7 @@ export function createWorld(scene, cameraColliders = []) {
     point.position.set(light.x, light.y, light.z);
     point.castShadow = true;
     point.shadow.mapSize.set(512, 512);
-    scene.add(point);
+    act1Group.add(point);
     registerAlarmLight(apartmentAlarm, point);
   }
 
@@ -683,83 +817,90 @@ export function createWorld(scene, cameraColliders = []) {
   // dominant source and everything else just tints toward it.
   const bloodLight = new THREE.PointLight("#ff141c", 0, 16, 2);
   bloodLight.position.set(0, 3.4, 3);
-  scene.add(bloodLight);
+  act1Group.add(bloodLight);
   apartmentAlarm.redLight = bloodLight;
 
   // ================= ZONE 1 — LUCY'S APARTMENT =================
-  addRoom(scene, colliders, { x: 0, z: 3, w: 11, d: 16, color: "#1c1e2a", floorColor: "#232018", key: "z1" });
+  addRoom(act1Group, colliders, { x: 0, z: 3, w: 11, d: 16, color: "#1c1e2a", floorColor: "#232018", key: "z1" });
   anchors.spawn = new THREE.Vector3(0, 0, 5.5);
-  addBox(scene, colliders, { w: 11, h: 6, d: 0.6, x: 0, y: 3, z: 10.7, mat: wallMat("#1c1e2a", "z1:endcap") });
+  addBox(act1Group, colliders, { w: 11, h: 6, d: 0.6, x: 0, y: 3, z: 10.7, mat: wallMat("#1c1e2a", "z1:endcap") });
 
   for (const fixture of [
-    addCeilingLight(scene, flickerList, { x: 0, z: 6, color: "#e6c99a", intensity: 1.8 }),
-    addCeilingLight(scene, flickerList, { x: 0, z: -2, color: "#cfe0ff", intensity: 1.4, flicker: true }),
+    addCeilingLight(act1Group, flickerList, { x: 0, z: 6, color: "#e6c99a", intensity: 1.8 }),
+    addCeilingLight(act1Group, flickerList, { x: 0, z: -2, color: "#cfe0ff", intensity: 1.4, flicker: true }),
   ]) {
     registerAlarmLight(apartmentAlarm, fixture.light, fixture.flickerEntry);
     registerAlarmGlow(apartmentAlarm, fixture.glow);
   }
 
-  anchors.window = addPropBox(scene, colliders, { x: -5.2, y: 2, z: 4, w: 0.3, h: 2.6, d: 3.2, color: "#18e0e0", key: "window" });
+  anchors.window = addPropBox(act1Group, colliders, { x: -5.2, y: 2, z: 4, w: 0.3, h: 2.6, d: 3.2, color: "#18e0e0", key: "window" });
   // Keep the original box only as an interaction/collision anchor; the city
   // image below is the visible window surface.
   anchors.window.visible = false;
-  addCityViewWindow(scene, { x: -5.03, y: 2, z: 4, width: 3.05, height: 2.45 });
-  addNeonSign(scene, { x: -5.4, y: 2, z: 4, w: 2.6, h: 2, color: "#101a30", ry: Math.PI / 2, intensity: 2.4, distance: 6 });
+  addCityViewWindow(act1Group, { x: -5.03, y: 2, z: 4, width: 3.05, height: 2.45 });
+  addNeonSign(act1Group, { x: -5.4, y: 2, z: 4, w: 2.6, h: 2, color: "#101a30", ry: Math.PI / 2, intensity: 2.4, distance: 6 });
 
-  anchors.bed = addPropBox(scene, colliders, { x: 3.4, y: 0.35, z: 6.5, w: 2, h: 0.7, d: 3, color: "#332845", key: "bed" });
-  addBox(scene, colliders, { w: 2, h: 0.15, d: 0.8, x: 3.4, y: 0.78, z: 5.3, mat: metalMat("#443458", "pillow", { rough: 0.8, metal: 0 }), collide: false });
-  anchors.dataShards = addPropBox(scene, colliders, { x: 3.6, y: 0.9, z: 3.2, w: 0.8, h: 0.4, d: 0.6, color: "#f6e94a", emissive: true, collide: false, key: "shards" });
-  anchors.cyberdeck = addPropBox(scene, colliders, { x: -2.4, y: 0.55, z: -1, w: 1.4, h: 1.1, d: 0.8, color: "#ff2fd0", emissive: true, key: "cyberdeck" });
-  addMonitor(scene, { x: -2.4, y: 1.1, z: -1.42, ry: Math.PI, key: "cyberdeck-screen", title: "NET-ACCESS", color: "#ff2fd0", accent: "#18e0e0", standH: 0.4 });
+  anchors.bed = addPropBox(act1Group, colliders, { x: 3.4, y: 0.35, z: 6.5, w: 2, h: 0.7, d: 3, color: "#332845", key: "bed" });
+  addBox(act1Group, colliders, { w: 2, h: 0.15, d: 0.8, x: 3.4, y: 0.78, z: 5.3, mat: metalMat("#443458", "pillow", { rough: 0.8, metal: 0 }), collide: false });
+  anchors.dataShards = addPropBox(act1Group, colliders, { x: 3.6, y: 0.9, z: 3.2, w: 0.8, h: 0.4, d: 0.6, color: "#f6e94a", emissive: true, collide: false, key: "shards" });
+  anchors.cyberdeck = addPropBox(act1Group, colliders, { x: -2.4, y: 0.55, z: -1, w: 1.4, h: 1.1, d: 0.8, color: "#ff2fd0", emissive: true, key: "cyberdeck" });
+  addMonitor(act1Group, { x: -2.4, y: 1.1, z: -1.42, ry: Math.PI, key: "cyberdeck-screen", title: "NET-ACCESS", color: "#ff2fd0", accent: "#18e0e0", standH: 0.4 });
   anchors.mainDesk = new THREE.Vector3(-2.4, 0, -0.5);
-  addDesk(scene, colliders, { x: -2.4, z: -0.5, ry: 0, key: "apt-desk" });
+  addDesk(act1Group, colliders, { x: -2.4, z: -0.5, ry: 0, key: "apt-desk" });
 
   // --- Act I objective props -------------------------------------------------
   // Note by the bed -> key under the desk -> writing that only the red light
   // reveals. Deliberately spread across the three corners of the apartment so
   // the act is walked rather than read from one spot.
-  anchors.bloodNote = addBloodNote(scene, { x: 4.05, z: 8.45, ry: 0.42 });
+  anchors.bloodNote = addBloodNote(act1Group, { x: 4.05, z: 8.45, ry: 0.42 });
   props.bloodNote = anchors.bloodNote;
 
-  anchors.accessKey = addAccessKey(scene, { x: -3.3, z: -0.85, ry: 0.5 });
+  anchors.accessKey = addAccessKey(act1Group, { x: -3.3, z: -0.85, ry: 0.5 });
   props.accessKey = anchors.accessKey;
 
   // Same wall as the window but clear of its interaction radius, so the two
   // never compete for the prompt.
-  anchors.bloodWall = addHiddenScrawl(scene, apartmentAlarm, {
+  anchors.bloodWall = addHiddenScrawl(act1Group, apartmentAlarm, {
     x: -5.14, y: 2.25, z: 0.2, ry: Math.PI / 2, w: 2.4, h: 1.2,
     key: "apt-names", lines: ["MARA  NOAH", "SERA  KIAN", "LUCY"],
   });
   props.bloodWall = anchors.bloodWall;
 
-  addDrawing(scene, { x: 5.17, y: 1.6, z: 0, ry: -Math.PI / 2, key: "apt-drawing", scale: 0.6 });
-  addWarningSign(scene, { x: -5.17, y: 1.1, z: -1.5, ry: Math.PI / 2, text: "NO SIGNAL" });
-  addDebrisPatch(scene, { x: 2, z: -3, count: 6, radius: 1 });
-  addCable(scene, { from: [-2.4, 0.9, -1.4], to: [-4.8, 0.1, -3.5], sag: 0.3 });
+  addDrawing(act1Group, { x: 5.17, y: 1.6, z: 0, ry: -Math.PI / 2, key: "apt-drawing", scale: 0.6 });
+  addWarningSign(act1Group, { x: -5.17, y: 1.1, z: -1.5, ry: Math.PI / 2, text: "NO SIGNAL" });
+  addDebrisPatch(act1Group, { x: 2, z: -3, count: 6, radius: 1 });
+  addCable(act1Group, { from: [-2.4, 0.9, -1.4], to: [-4.8, 0.1, -3.5], sag: 0.3 });
 
-  addDoorGate(scene, colliders, gates, "gate1", { x: 0, z: -4.6, w: 4, color: "#c94a3a" });
+  addDoorGate(act1Group, colliders, gates, "gate1", { x: 0, z: -4.6, w: 4, color: "#c94a3a" });
 
   // Blender-made set dressing for the apartment (optional — see
   // client/public/models/environment/README.md). Anchored at the room's
   // floor center (x:0, z:3), matching addRoom's z1 center above.
-  addSetDressing(scene, ENV_MODEL.lucyApartmentDecor, { anchor: [0, 0, 3] });
+  addSetDressing(act1Group, ENV_MODEL.lucyApartmentDecor, { anchor: [0, 0, 3] });
 
   // ================= ZONE 2 — ARASAKA FACILITY =================
   addRoom(act2Group, colliders, { x: 0, z: -26, w: 14, d: 42, color: "#181920", floorColor: "#101115", key: "z2" });
+  act2Group.add(new THREE.AmbientLight(0x200b3b, 1.6));
   anchors.zone2Spawn = new THREE.Vector3(0, 0, -10);
+  const spawnAct2Prop = createAct2PropSpawner(act2Group, colliders);
 
   for (let i = 0; i < 5; i++) addCeilingLight(act2Group, flickerList, { x: 0, z: -6 - i * 8, color: "#7f96c0", intensity: 1.5, flicker: i === 2 || i === 4 });
   addSecurityCamera(act2Group, { x: -6.2, y: 5, z: -14, ry: 0.5, modelUrl: MODEL.securityCamera });
   addSecurityCamera(act2Group, { x: 6.2, y: 5, z: -36, ry: -0.5, modelUrl: MODEL.securityCamera });
 
   anchors.nameWall = addPropBox(act2Group, colliders, { x: -6.4, y: 1.5, z: -20, w: 0.3, h: 3, d: 5, color: "#20222e", key: "namewall" });
+  anchors.nameWall.name = "Mission_NameWall_Backing";
   applyTextureMap(anchors.nameWall, NAME_WALL_TEXTURE);
+  addAct2Facility(act2Group, anchors.nameWall);
   for (let i = 0; i < 5; i++) {
     addDrawing(act2Group, { x: -6.55, y: 1.2 + (i % 2) * 0.4, z: -22 + i * 0.9, ry: Math.PI / 2, key: `namewall-mark-${i}`, scale: 0.28 });
   }
   addWarningSign(act2Group, { x: -6.55, y: 2.6, z: -17.5, ry: Math.PI / 2, text: "SUBLEVEL 23" });
 
   anchors.securityTerminal = addPropBox(act2Group, colliders, { x: 5.4, y: 0.65, z: -34, w: 1, h: 1.3, d: 0.7, color: "#18e0e0", emissive: true, key: "secterm" });
+  const terminalScreenLight = new THREE.PointLight("#d946ef", 4.0, 8, 2);
+  terminalScreenLight.position.set(5.4, 2.0, -34);
+  act2Group.add(terminalScreenLight);
   addMonitor(act2Group, { x: 5.4, y: 1.3, z: -34.4, ry: Math.PI, key: "sec-screen", title: "ARASAKA SEC", color: "#18e0e0", accent: "#f6c93a", standH: 0.3, modelUrl: MODEL.terminal });
   addDesk(act2Group, colliders, { x: 5.2, z: -35.6, ry: 0, key: "sec-desk" });
 
@@ -772,7 +913,21 @@ export function createWorld(scene, cameraColliders = []) {
   addContainer(act2Group, colliders, { x: -5.2, z: -8, ry: 0.2, key: "z2cont1", modelUrl: MODEL.container });
   addDebrisPatch(act2Group, { x: 3, z: -18, count: 8, radius: 1.2, seedOffset: 5 });
   addVent(act2Group, { x: -6.62, y: 4.6, z: -26, ry: Math.PI / 2, w: 0.7, h: 0.4 });
-  addPipe(act2Group, colliders, { x: 6.62, y: 5.2, z: -20, length: 12, ry: Math.PI / 2, color: "#232838" });
+  // Ceiling utilities make the facility read as an industrial space, while
+  // all floor clutter below registers collision volumes through the spawner.
+  addPipe(act2Group, colliders, { x: 6.15, y: 5.25, z: -26, length: 37, ry: Math.PI / 2, color: "#232838" });
+  addPipe(act2Group, colliders, { x: -6.15, y: 5.25, z: -26, length: 37, ry: Math.PI / 2, color: "#232838" });
+  for (let z = -12; z >= -40; z -= 7) {
+    addPipe(act2Group, colliders, { x: 0, y: 5.08, z, length: 12, color: "#303747" });
+  }
+  addAct2FloorMarkings(act2Group);
+  addAct2EmergencyLight(act2Group, flickerList, { x: 0, y: 5.2, z: -27 });
+  addAct2SparkNode(act2Group, crackleList);
+
+  spawnAct2Prop({ model: "container", x: -4.8, z: -18, ry: 0.35, w: 1.15, h: 1.0, d: 0.85, key: "storage-a" });
+  spawnAct2Prop({ model: "container", x: 4.9, z: -28, ry: -0.25, scale: 1.08, w: 1.2, h: 1.0, d: 0.9, key: "storage-b" });
+  spawnAct2Prop({ model: "server-rack", x: -5.85, z: -37.5, ry: Math.PI / 2, w: 0.95, h: 2.2, d: 0.75, key: "relay-rack" });
+  spawnAct2Prop({ model: "terminal", x: 4.9, z: -22, ry: -Math.PI / 2, scale: 1.15, w: 0.85, h: 1.25, d: 0.65, color: "#15232a", key: "maintenance-console" });
 
   addDoorGate(act2Group, colliders, gates, "gate2", { x: 0, z: -46.6, w: 5, color: "#c94a3a" });
 
@@ -909,14 +1064,14 @@ export function createWorld(scene, cameraColliders = []) {
     actGroups,
     act2Group,
     holograms,
-    updateLights: makeLightUpdater(flickerList, blinkers, scene, apartmentAlarm),
+    updateLights: makeLightUpdater(flickerList, blinkers, scene, apartmentAlarm, crackleList),
     triggerApartmentAlarm: () => {
       apartmentAlarm.active = true;
     },
   };
 }
 
-function makeLightUpdater(flickerList, _blinkers, scene, apartmentAlarm) {
+function makeLightUpdater(flickerList, _blinkers, scene, apartmentAlarm, crackleList = []) {
   const isVisible = (object) => {
     for (let node = object; node; node = node.parent) if (!node.visible) return false;
     return true;
@@ -951,6 +1106,23 @@ function makeLightUpdater(flickerList, _blinkers, scene, apartmentAlarm) {
       const b = m.userData.blink;
       const on = Math.sin(t * b.speed + b.phase) > 0.4;
       m.visible = on;
+    }
+    for (const crackle of crackleList) {
+      if (!isVisible(crackle.owner)) {
+        crackle.light.intensity = 0;
+        crackle.glow.material.opacity = 0;
+        continue;
+      }
+      if (t >= crackle.nextBurst) {
+        const duration = 0.025 + Math.random() * 0.07;
+        crackle.burstEnds = t + duration;
+        crackle.nextBurst = crackle.burstEnds + 0.18 + Math.random() * 1.1;
+      }
+      const active = t < crackle.burstEnds;
+      const strength = active ? 1.5 + Math.random() * 2.5 : 0;
+      crackle.light.intensity = strength;
+      crackle.glow.material.opacity = active ? 0.55 + Math.random() * 0.45 : 0;
+      crackle.glow.scale.setScalar(active ? 0.8 + Math.random() * 1.8 : 1);
     }
   };
 }

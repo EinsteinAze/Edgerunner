@@ -186,6 +186,13 @@ export class Game {
     if (gateKey) unlockGate(this.world, gateKey);
     const nextActGroup = this.world.actGroups?.[act.key + 1];
     if (nextActGroup) nextActGroup.visible = true;
+    if (act.key === 1) {
+      // Switch the apartment and facility as one transaction: no Act I room
+      // geometry remains visible behind the Act II facility.
+      if (this.world.actGroups?.[1]) this.world.actGroups[1].visible = false;
+      if (this.world.actGroups?.[2]) this.world.actGroups[2].visible = true;
+      this.scene.fog = new THREE.FogExp2(0x0c0614, 0.045);
+    }
     this.network?.sendAct(act.key + 1);
     this.cb.onActComplete?.(act, false);
   }
