@@ -22,12 +22,14 @@ export class PlayerController {
     this.facing = 0;
     this.turnRate = 0;
     this.speed = 0;
+    this.animationClock = new THREE.Clock();
     this.character.root.position.copy(this.position);
   }
 
   teleport(vec3) {
     this.position.copy(vec3);
     this.velocityY = 0;
+    this.character.root.position.copy(this.position);
   }
 
   resolveCollisions(nextPos) {
@@ -72,6 +74,7 @@ export class PlayerController {
     _move.set(0, 0, 0);
     if (forward) _move.addScaledVector(_fwd, forward);
     if (strafe) _move.addScaledVector(_right, strafe);
+    const movementKeysActive = forward !== 0 || strafe !== 0;
     const moving = _move.lengthSq() > 0.0001;
     if (moving) _move.normalize();
 
@@ -107,7 +110,14 @@ export class PlayerController {
     }
     this.character.root.rotation.y = this.facing;
 
-    this.character.animate({ speed: this.speed, dt, jumping: !this.grounded, turnRate: this.turnRate });
+    this.character.animate({
+      speed: this.speed,
+      dt,
+      jumping: !this.grounded,
+      turnRate: this.turnRate,
+      walking: movementKeysActive && moving,
+      walkTime: this.animationClock.getElapsedTime(),
+    });
   }
 }
 

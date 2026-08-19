@@ -92,8 +92,8 @@ export async function spawnAsset(url, options = {}) {
     // Clone materials per-instance — GLTF PBR properties (baseColor,
     // roughness, metalness, normal/emissive maps) all live on the material
     // and are preserved automatically by cloning it; we never rebuild them.
-    if (Array.isArray(o.material)) o.material = o.material.map((m) => m.clone());
-    else if (o.material) o.material = o.material.clone();
+    if (Array.isArray(o.material)) o.material = o.material.map((m) => configureImportedMaterial(m.clone()));
+    else if (o.material) o.material = configureImportedMaterial(o.material.clone());
   });
 
   if (position) root.position.set(position[0], position[1], position[2]);
@@ -110,6 +110,18 @@ export async function spawnAsset(url, options = {}) {
   }
 
   return { root, mixer, actions, animations: source.animations || [] };
+}
+
+function configureImportedMaterial(material) {
+  // GLTFLoader creates MeshStandard/Physical materials for PBR assets. Keep
+  // those materials intact (including base color, emissive and texture maps)
+  // while ensuring they take part in the renderer's standard light pipeline.
+  if (material.isMeshStandardMaterial || material.isMeshPhysicalMaterial) {
+    material.toneMapped = true;
+    if (material.emissiveMap) material.emissiveIntensity = Math.max(material.emissiveIntensity, 1);
+  }
+  material.needsUpdate = true;
+  return material;
 }
 
 /**

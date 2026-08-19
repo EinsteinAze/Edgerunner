@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { buildCharacter, makeHologram } from "./CharacterModel.js";
 import { grungeSet, metalSet, floorSet, screenTexture, warningSignTexture, drawingTexture } from "./Textures.js";
-import { trySwapForAsset } from "./AssetLoader.js";
+import { trySwapForAsset, spawnAsset } from "./AssetLoader.js";
 
 // ---------------------------------------------------------------------------
 // materials
@@ -13,7 +13,18 @@ function neonMat(color, intensity = 1.2) {
 
 function wallMat(color, key) {
   const tex = grungeSet(color, key);
-  const mat = new THREE.MeshStandardMaterial({ color: "#ffffff", map: tex.map, roughnessMap: tex.roughnessMap, roughness: 1, metalness: 0.05 });
+  const mat = new THREE.MeshStandardMaterial({
+    color: "#ffffff",
+    map: tex.map,
+    roughnessMap: tex.roughnessMap,
+    roughness: 1,
+    metalness: 0.05,
+    // Room surfaces must write to the depth buffer so they completely hide
+    // zones behind them instead of reading as transparent cut-outs.
+    transparent: false,
+    depthWrite: true,
+    depthTest: true,
+  });
   tex.map.repeat.set(2, 1);
   tex.roughnessMap.repeat.set(2, 1);
   return mat;
@@ -22,6 +33,60 @@ function wallMat(color, key) {
 function floorMat(color, key) {
   const tex = floorSet(color, key);
   return new THREE.MeshStandardMaterial({ color: "#ffffff", map: tex.map, roughness: 0.75, metalness: 0.15 });
+}
+
+const CITY_VIEW_TEXTURE = "/models/textures/city_view.png";
+const NAME_WALL_TEXTURE = "/models/textures/namedwall.png";
+
+function applyTextureMap(mesh, url) {
+  const textureLoader = new THREE.TextureLoader();
+  textureLoader.load(
+    url,
+    (texture) => {
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.magFilter = THREE.NearestFilter;
+      texture.minFilter = THREE.LinearMipmapLinearFilter;
+      texture.needsUpdate = true;
+
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const material of materials) {
+        material.map = texture;
+        material.color.set("#ffffff");
+        material.metalness = 0.05;
+        material.roughness = 0.82;
+        material.needsUpdate = true;
+      }
+    },
+    undefined,
+    (error) => console.warn(`[World] Could not load texture: ${url}`, error)
+  );
+}
+
+function addCityViewWindow(scene, { x, y, z, width, height }) {
+  const textureLoader = new THREE.TextureLoader();
+  textureLoader.load(
+    CITY_VIEW_TEXTURE,
+    (texture) => {
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.magFilter = THREE.NearestFilter;
+      texture.minFilter = THREE.NearestFilter;
+      texture.needsUpdate = true;
+
+      const imageAspect = texture.image.width / texture.image.height;
+      const viewHeight = Math.min(height, width / imageAspect);
+      const view = new THREE.Mesh(
+        new THREE.PlaneGeometry(width, viewHeight),
+        new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide, toneMapped: false })
+      );
+      // The apartment's left wall faces along X, so rotate the plane into
+      // the YZ wall plane and place it just inside the retained collider.
+      view.rotation.y = Math.PI / 2;
+      view.position.set(x, y, z);
+      scene.add(view);
+    },
+    undefined,
+    (error) => console.warn(`[World] Could not load Night City window texture: ${CITY_VIEW_TEXTURE}`, error)
+  );
 }
 
 function metalMat(color, key, { rough = 0.4, metal = 0.75, emissive, emissiveIntensity = 1 } = {}) {
@@ -145,7 +210,7 @@ function addCeilingLight(scene, flickerList, { x, y = 5.8, z, color = "#cfe0ff",
   light.position.set(x, y - 0.3, z);
   light.castShadow = false;
   scene.add(light);
-  if (flicker) flickerList.push({ light, glow, base: intensity, glowBase: 0.6, speed: 3 + Math.random() * 4, seed: Math.random() * 100, broken: Math.random() < 0.5 });
+  if (flicker) flickerList.push({ light, glow, owner: scene, base: intensity, glowBase: 0.6, speed: 3 + Math.random() * 4, seed: Math.random() * 100, broken: Math.random() < 0.5 });
   return light;
 }
 
@@ -388,6 +453,54 @@ const MODEL = {
   hiddenConsole: `${PROPS}/hidden-console.glb`,
 };
 
+// Custom Blender set-dressing — purely additive, doesn't touch the
+// procedural room or its colliders. Drop matching .glb files in
+// client/public/models/environment/; if a file is missing, nothing happens
+// (no error, no gap in the room) since it was never there to begin with.
+const ENV = "/models/environment";
+const ENV_MODEL = {
+  lucyApartmentDecor: `${ENV}/lucy-apartment-decor.glb`,
+  world: `${ENV}/world.glb`,
+};
+
+/**
+ * Loads an additive Blender-made decoration scene and drops it into the
+ * world at `anchor` (the point in the game that maps to the exported
+ * file's origin (0,0,0)). Unlike `trySwapForAsset`, this doesn't hide or
+ * replace any procedural mesh — it just adds on top. Safe to call even if
+ * the file doesn't exist yet: `spawnAsset` resolves to `null` and this is
+ * a no-op.
+ */
+function addSetDressing(scene, url, { anchor = [0, 0, 0], rotationY = 0, scale = 1 } = {}) {
+  spawnAsset(url, { position: anchor, rotationY, scale }).then((inst) => {
+    if (inst) scene.add(inst.root);
+  });
+}
+
+function addStaticWorldMap(scene, colliders, cameraColliders, url) {
+  spawnAsset(url).then((inst) => {
+    if (!inst) return;
+    scene.add(inst.root);
+    inst.root.updateMatrixWorld(true);
+
+    inst.root.traverse((mesh) => {
+      if (!mesh.isMesh || mesh.userData?.collision === false) return;
+      cameraColliders.push(mesh);
+
+      const bounds = new THREE.Box3().setFromObject(mesh);
+      const size = new THREE.Vector3();
+      const center = new THREE.Vector3();
+      bounds.getSize(size);
+      bounds.getCenter(center);
+
+      // Floors and ceilings do not obstruct XZ movement; the controller
+      // handles grounding separately at y=0.
+      if (size.y < 0.2 || size.x < 0.02 || size.z < 0.02) return;
+      colliders.push({ mesh, x: center.x, z: center.z, hw: size.x / 2, hd: size.z / 2, ry: 0 });
+    });
+  });
+}
+
 // ---------------------------------------------------------------------------
 // world
 // ---------------------------------------------------------------------------
@@ -399,17 +512,27 @@ const MODEL = {
  * grounded environments with practical lighting and colored accents used
  * intentionally rather than everything glowing neon.
  */
-export function createWorld(scene) {
+export function createWorld(scene, cameraColliders = []) {
   const colliders = [];
   const gates = {};
   const anchors = {};
+  // Everything created for the facility (geometry, practical lights, props,
+  // and story anchors) is parented here. It remains invisible until Act I is
+  // complete, preventing the facility from bleeding into the apartment.
+  const act2Group = new THREE.Group();
+  act2Group.name = "act2Group";
+  act2Group.visible = false;
+  scene.add(act2Group);
+  const actGroups = { 2: act2Group };
   const holograms = [];
   const flickerList = [];
   const blinkers = [];
 
   // Lift the ambient fill just enough to keep room detail readable without
   // flattening the darker cyberpunk mood or competing with the neon lights.
-  scene.fog = new THREE.FogExp2("#0a0d14", 0.02);
+  scene.fog = new THREE.FogExp2(0x0a0c14, 0.035);
+  const ambient = new THREE.AmbientLight("#fff3e6", 1.15);
+  scene.add(ambient);
   const hemi = new THREE.HemisphereLight("#4d5f8d", "#15131c", 0.85);
   scene.add(hemi);
   const key = new THREE.DirectionalLight("#6f89c4", 0.55);
@@ -423,29 +546,52 @@ export function createWorld(scene) {
   key.shadow.bias = -0.0015;
   scene.add(key);
 
+  // Directional cyan edge lighting separates the player and foreground props
+  // from the dark environment, while this soft magenta practical adds the
+  // characteristic cyberpunk color contrast without flattening the scene.
+  const cyanRim = new THREE.DirectionalLight("#00f0ff", 1.25);
+  cyanRim.position.set(-8, 7, -6);
+  scene.add(cyanRim);
+  const magentaAccent = new THREE.PointLight("#ff007f", 7, 12, 2);
+  magentaAccent.position.set(3.5, 3, 1.5);
+  scene.add(magentaAccent);
+
+  // Warm, low-radius practical fill lights keep the apartment readable
+  // without flattening the contrast in the rest of the story spaces.
+  const apartmentLights = [
+    { x: -2.5, y: 2.6, z: 0.2, color: "#ffd6ab", intensity: 18 },
+    { x: 2.8, y: 2.2, z: 5.8, color: "#a9c8ff", intensity: 13 },
+    { x: -3.8, y: 2.0, z: 7.2, color: "#8eeeff", intensity: 10 },
+  ];
+  for (const light of apartmentLights) {
+    const point = new THREE.PointLight(light.color, light.intensity, 8, 2);
+    point.position.set(light.x, light.y, light.z);
+    point.castShadow = true;
+    point.shadow.mapSize.set(512, 512);
+    scene.add(point);
+  }
+
   // ================= ZONE 1 — LUCY'S APARTMENT =================
   addRoom(scene, colliders, { x: 0, z: 3, w: 11, d: 16, color: "#1c1e2a", floorColor: "#232018", key: "z1" });
-  anchors.spawn = new THREE.Vector3(0, 0, 8);
+  anchors.spawn = new THREE.Vector3(0, 0, 5.5);
   addBox(scene, colliders, { w: 11, h: 6, d: 0.6, x: 0, y: 3, z: 10.7, mat: wallMat("#1c1e2a", "z1:endcap") });
 
   addCeilingLight(scene, flickerList, { x: 0, z: 6, color: "#e6c99a", intensity: 1.8 });
   addCeilingLight(scene, flickerList, { x: 0, z: -2, color: "#cfe0ff", intensity: 1.4, flicker: true });
 
   anchors.window = addPropBox(scene, colliders, { x: -5.2, y: 2, z: 4, w: 0.3, h: 2.6, d: 3.2, color: "#18e0e0", key: "window" });
+  // Keep the original box only as an interaction/collision anchor; the city
+  // image below is the visible window surface.
+  anchors.window.visible = false;
+  addCityViewWindow(scene, { x: -5.03, y: 2, z: 4, width: 3.05, height: 2.45 });
   addNeonSign(scene, { x: -5.4, y: 2, z: 4, w: 2.6, h: 2, color: "#101a30", ry: Math.PI / 2, intensity: 2.4, distance: 6 });
-  // city-glow strips leaking through the blinds
-  for (const yy of [1.2, 2.0, 2.8]) {
-    const strip = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 0.05), neonMat("#3a6fb0", 1.6));
-    strip.rotation.y = Math.PI / 2;
-    strip.position.set(-5.35, yy, 4);
-    scene.add(strip);
-  }
 
   anchors.bed = addPropBox(scene, colliders, { x: 3.4, y: 0.35, z: 6.5, w: 2, h: 0.7, d: 3, color: "#332845", key: "bed" });
   addBox(scene, colliders, { w: 2, h: 0.15, d: 0.8, x: 3.4, y: 0.78, z: 5.3, mat: metalMat("#443458", "pillow", { rough: 0.8, metal: 0 }), collide: false });
   anchors.dataShards = addPropBox(scene, colliders, { x: 3.6, y: 0.9, z: 3.2, w: 0.8, h: 0.4, d: 0.6, color: "#f6e94a", emissive: true, collide: false, key: "shards" });
   anchors.cyberdeck = addPropBox(scene, colliders, { x: -2.4, y: 0.55, z: -1, w: 1.4, h: 1.1, d: 0.8, color: "#ff2fd0", emissive: true, key: "cyberdeck" });
   addMonitor(scene, { x: -2.4, y: 1.1, z: -1.42, ry: Math.PI, key: "cyberdeck-screen", title: "NET-ACCESS", color: "#ff2fd0", accent: "#18e0e0", standH: 0.4 });
+  anchors.mainDesk = new THREE.Vector3(-2.4, 0, -0.5);
   addDesk(scene, colliders, { x: -2.4, z: -0.5, ry: 0, key: "apt-desk" });
 
   addDrawing(scene, { x: 5.17, y: 1.6, z: 0, ry: -Math.PI / 2, key: "apt-drawing", scale: 0.6 });
@@ -455,36 +601,42 @@ export function createWorld(scene) {
 
   addDoorGate(scene, colliders, gates, "gate1", { x: 0, z: -4.6, w: 4, color: "#c94a3a" });
 
+  // Blender-made set dressing for the apartment (optional — see
+  // client/public/models/environment/README.md). Anchored at the room's
+  // floor center (x:0, z:3), matching addRoom's z1 center above.
+  addSetDressing(scene, ENV_MODEL.lucyApartmentDecor, { anchor: [0, 0, 3] });
+
   // ================= ZONE 2 — ARASAKA FACILITY =================
-  addRoom(scene, colliders, { x: 0, z: -26, w: 14, d: 42, color: "#181920", floorColor: "#101115", key: "z2" });
+  addRoom(act2Group, colliders, { x: 0, z: -26, w: 14, d: 42, color: "#181920", floorColor: "#101115", key: "z2" });
   anchors.zone2Spawn = new THREE.Vector3(0, 0, -10);
 
-  for (let i = 0; i < 5; i++) addCeilingLight(scene, flickerList, { x: 0, z: -6 - i * 8, color: "#7f96c0", intensity: 1.5, flicker: i === 2 || i === 4 });
-  addSecurityCamera(scene, { x: -6.2, y: 5, z: -14, ry: 0.5, modelUrl: MODEL.securityCamera });
-  addSecurityCamera(scene, { x: 6.2, y: 5, z: -36, ry: -0.5, modelUrl: MODEL.securityCamera });
+  for (let i = 0; i < 5; i++) addCeilingLight(act2Group, flickerList, { x: 0, z: -6 - i * 8, color: "#7f96c0", intensity: 1.5, flicker: i === 2 || i === 4 });
+  addSecurityCamera(act2Group, { x: -6.2, y: 5, z: -14, ry: 0.5, modelUrl: MODEL.securityCamera });
+  addSecurityCamera(act2Group, { x: 6.2, y: 5, z: -36, ry: -0.5, modelUrl: MODEL.securityCamera });
 
-  anchors.nameWall = addPropBox(scene, colliders, { x: -6.4, y: 1.5, z: -20, w: 0.3, h: 3, d: 5, color: "#20222e", key: "namewall" });
+  anchors.nameWall = addPropBox(act2Group, colliders, { x: -6.4, y: 1.5, z: -20, w: 0.3, h: 3, d: 5, color: "#20222e", key: "namewall" });
+  applyTextureMap(anchors.nameWall, NAME_WALL_TEXTURE);
   for (let i = 0; i < 5; i++) {
-    addDrawing(scene, { x: -6.55, y: 1.2 + (i % 2) * 0.4, z: -22 + i * 0.9, ry: Math.PI / 2, key: `namewall-mark-${i}`, scale: 0.28 });
+    addDrawing(act2Group, { x: -6.55, y: 1.2 + (i % 2) * 0.4, z: -22 + i * 0.9, ry: Math.PI / 2, key: `namewall-mark-${i}`, scale: 0.28 });
   }
-  addWarningSign(scene, { x: -6.55, y: 2.6, z: -17.5, ry: Math.PI / 2, text: "SUBLEVEL 23" });
+  addWarningSign(act2Group, { x: -6.55, y: 2.6, z: -17.5, ry: Math.PI / 2, text: "SUBLEVEL 23" });
 
-  anchors.securityTerminal = addPropBox(scene, colliders, { x: 5.4, y: 0.65, z: -34, w: 1, h: 1.3, d: 0.7, color: "#18e0e0", emissive: true, key: "secterm" });
-  addMonitor(scene, { x: 5.4, y: 1.3, z: -34.4, ry: Math.PI, key: "sec-screen", title: "ARASAKA SEC", color: "#18e0e0", accent: "#f6c93a", standH: 0.3, modelUrl: MODEL.terminal });
-  addDesk(scene, colliders, { x: 5.2, z: -35.6, ry: 0, key: "sec-desk" });
+  anchors.securityTerminal = addPropBox(act2Group, colliders, { x: 5.4, y: 0.65, z: -34, w: 1, h: 1.3, d: 0.7, color: "#18e0e0", emissive: true, key: "secterm" });
+  addMonitor(act2Group, { x: 5.4, y: 1.3, z: -34.4, ry: Math.PI, key: "sec-screen", title: "ARASAKA SEC", color: "#18e0e0", accent: "#f6c93a", standH: 0.3, modelUrl: MODEL.terminal });
+  addDesk(act2Group, colliders, { x: 5.2, z: -35.6, ry: 0, key: "sec-desk" });
 
-  addServerRack(scene, colliders, { x: 6.4, z: -14, key: "z2-a", modelUrl: MODEL.serverRack });
-  addServerRack(scene, colliders, { x: 6.4, z: -15.2, key: "z2-b", modelUrl: MODEL.serverRack });
-  addServerRack(scene, colliders, { x: -6.4, z: -30, key: "z2-c", modelUrl: MODEL.serverRack });
+  addServerRack(act2Group, colliders, { x: 6.4, z: -14, key: "z2-a", modelUrl: MODEL.serverRack });
+  addServerRack(act2Group, colliders, { x: 6.4, z: -15.2, key: "z2-b", modelUrl: MODEL.serverRack });
+  addServerRack(act2Group, colliders, { x: -6.4, z: -30, key: "z2-c", modelUrl: MODEL.serverRack });
   for (let i = 0; i < 4; i++) {
-    addPropBox(scene, colliders, { x: (i % 2 === 0 ? -1 : 1) * 5.6, y: 1, z: -10 - i * 6, w: 0.8, h: 2, d: 0.8, color: "#1c1520", key: `crate2-${i}` });
+    addPropBox(act2Group, colliders, { x: (i % 2 === 0 ? -1 : 1) * 5.6, y: 1, z: -10 - i * 6, w: 0.8, h: 2, d: 0.8, color: "#1c1520", key: `crate2-${i}` });
   }
-  addContainer(scene, colliders, { x: -5.2, z: -8, ry: 0.2, key: "z2cont1", modelUrl: MODEL.container });
-  addDebrisPatch(scene, { x: 3, z: -18, count: 8, radius: 1.2, seedOffset: 5 });
-  addVent(scene, { x: -6.62, y: 4.6, z: -26, ry: Math.PI / 2, w: 0.7, h: 0.4 });
-  addPipe(scene, colliders, { x: 6.62, y: 5.2, z: -20, length: 12, ry: Math.PI / 2, color: "#232838" });
+  addContainer(act2Group, colliders, { x: -5.2, z: -8, ry: 0.2, key: "z2cont1", modelUrl: MODEL.container });
+  addDebrisPatch(act2Group, { x: 3, z: -18, count: 8, radius: 1.2, seedOffset: 5 });
+  addVent(act2Group, { x: -6.62, y: 4.6, z: -26, ry: Math.PI / 2, w: 0.7, h: 0.4 });
+  addPipe(act2Group, colliders, { x: 6.62, y: 5.2, z: -20, length: 12, ry: Math.PI / 2, color: "#232838" });
 
-  addDoorGate(scene, colliders, gates, "gate2", { x: 0, z: -46.6, w: 5, color: "#c94a3a" });
+  addDoorGate(act2Group, colliders, gates, "gate2", { x: 0, z: -46.6, w: 5, color: "#c94a3a" });
 
   // ================= ZONE 3 — TRAINING + MEMORY ROOM =================
   addRoom(scene, colliders, { x: 0, z: -70, w: 16, d: 38, color: "#171522", floorColor: "#0e0c16", key: "z3" });
@@ -609,10 +761,16 @@ export function createWorld(scene) {
 
   addBox(scene, colliders, { w: 22, h: 8, d: 0.6, x: 0, y: 4, z: -209.7, mat: wallMat("#0c0c14", "z6:endcap") });
 
-  return { colliders, gates, anchors, holograms, updateLights: makeLightUpdater(flickerList, blinkers, scene) };
+  addStaticWorldMap(scene, colliders, cameraColliders, ENV_MODEL.world);
+
+  return { colliders, gates, anchors, actGroups, act2Group, holograms, updateLights: makeLightUpdater(flickerList, blinkers, scene) };
 }
 
 function makeLightUpdater(flickerList, _blinkers, scene) {
+  const isVisible = (object) => {
+    for (let node = object; node; node = node.parent) if (!node.visible) return false;
+    return true;
+  };
   const blinkMeshes = [];
   scene.traverse((o) => {
     if (o.userData?.blink) blinkMeshes.push(o);
@@ -621,6 +779,7 @@ function makeLightUpdater(flickerList, _blinkers, scene) {
   return function updateLights(dt) {
     t += dt;
     for (const f of flickerList) {
+      if (!isVisible(f.owner)) continue;
       if (f.siren) {
         f.light.intensity = f.base * (0.5 + 0.5 * Math.sin(t * f.speed + f.seed));
         continue;
@@ -632,6 +791,7 @@ function makeLightUpdater(flickerList, _blinkers, scene) {
       if (f.glow) f.glow.material.emissiveIntensity = f.glowBase * flick * 2.2;
     }
     for (const m of blinkMeshes) {
+      if (!isVisible(m)) continue;
       const b = m.userData.blink;
       const on = Math.sin(t * b.speed + b.phase) > 0.4;
       m.visible = on;

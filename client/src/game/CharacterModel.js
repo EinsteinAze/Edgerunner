@@ -177,7 +177,7 @@ export function flickerHologram(root, dt) {
 }
 
 /** Cheap procedural walk-cycle: swings limbs based on a phase accumulator. */
-export function animateCharacter(root, { speed = 0, dt = 0, jumping = false, phaseRef, turnRate = 0 }) {
+export function animateCharacter(root, { speed = 0, dt = 0, jumping = false, phaseRef, turnRate = 0, walking = false, walkTime = 0 }) {
   const { armL, armR, legL, legR, torso, head, hips } = root.userData.parts;
   phaseRef.value += dt * (2 + speed * 6);
   const p = phaseRef.value;
@@ -191,10 +191,14 @@ export function animateCharacter(root, { speed = 0, dt = 0, jumping = false, pha
     return;
   }
 
-  legL.rotation.x = Math.sin(p) * 0.55 * amp;
-  legR.rotation.x = Math.sin(p + Math.PI) * 0.55 * amp;
-  armR.rotation.x = Math.sin(p) * 0.42 * amp;
-  armL.rotation.x = Math.sin(p + Math.PI) * 0.42 * amp;
+  const settle = Math.min(1, dt * 11);
+  legL.rotation.x = THREE.MathUtils.lerp(legL.rotation.x, Math.sin(p) * 0.55 * amp, settle);
+  legR.rotation.x = THREE.MathUtils.lerp(legR.rotation.x, Math.sin(p + Math.PI) * 0.55 * amp, settle);
+  // Explicit counter-swing driven by elapsed walking time keeps the hands
+  // readable even at a slow walk and smoothly settles them when idle.
+  const armSwing = walking ? Math.sin(walkTime * 8) * 0.6 : 0;
+  armR.rotation.x = THREE.MathUtils.lerp(armR.rotation.x, armSwing, settle);
+  armL.rotation.x = THREE.MathUtils.lerp(armL.rotation.x, -armSwing, settle);
 
   // lean into the run + a light counter-lean while turning — cheap but reads
   // as weight and momentum instead of a sprite sliding across the floor.
@@ -205,5 +209,5 @@ export function animateCharacter(root, { speed = 0, dt = 0, jumping = false, pha
   torso.rotation.z = Math.sin(p) * 0.025 * amp - THREE.MathUtils.clamp(turnRate, -1, 1) * 0.06;
   head.rotation.y = THREE.MathUtils.clamp(turnRate, -1, 1) * 0.18;
 
-  hips.position.y = 0.9 + Math.abs(Math.sin(p * 2)) * 0.02 * amp;
+  hips.position.y = THREE.MathUtils.lerp(hips.position.y, 0.9 + Math.abs(Math.sin(p * 2)) * 0.02 * amp, settle);
 }

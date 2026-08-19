@@ -32,6 +32,18 @@ export class CameraRig {
     this.distance = THREE.MathUtils.clamp(this.distance + deltaY * 0.0025, this.minDistance, this.maxDistance);
   }
 
+  /** Position the third-person camera behind `from` so its view faces `target`. */
+  faceTarget(from, target) {
+    if (!target) return;
+    _dir.subVectors(target, from);
+    _dir.y = 0;
+    if (_dir.lengthSq() < 0.0001) return;
+    _dir.normalize();
+    // Camera sits opposite the viewing direction; update() looks back at
+    // the player pivot, leaving the target directly ahead in the frame.
+    this.yaw = Math.atan2(-_dir.x, -_dir.z);
+  }
+
   update(targetPos, dt = 1 / 60) {
     this._sway += dt;
     const pivot = _origin.copy(targetPos).add(_pivotOffset);

@@ -35,6 +35,22 @@ export class Interactables {
     return list;
   }
 
+  navigationTarget(playerPos) {
+    let target = null;
+    let nearestDist = Infinity;
+    for (const beat of this._candidates()) {
+      const anchor = this.world.anchors[beat.anchor];
+      if (!anchor) continue;
+      const pos = anchor.position || anchor;
+      const distance = Math.hypot(playerPos.x - pos.x, playerPos.z - pos.z);
+      if (distance < nearestDist) {
+        nearestDist = distance;
+        target = anchor;
+      }
+    }
+    return target;
+  }
+
   update(dt, playerPos, input) {
     if (this.pendingId) {
       input.consumeInteract();

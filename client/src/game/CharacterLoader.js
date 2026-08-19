@@ -79,8 +79,7 @@ function buildGltfInstance(source, cosmetics) {
       o.castShadow = true;
       o.receiveShadow = true;
       if (o.material) {
-        o.material = Array.isArray(o.material) ? o.material.map((m) => m.clone()) : o.material.clone();
-        applyCosmeticTint(o.material, cosmetics);
+        o.material = createCharacterMaterial(o.name, cosmetics);
       }
     }
   });
@@ -100,6 +99,7 @@ function buildGltfInstance(source, cosmetics) {
   }
   clone.position.y -= box.min.y;
   wrapper.add(clone);
+  addCharacterFillLight(wrapper);
 
   const mixer = new THREE.AnimationMixer(clone);
   const actions = {};
@@ -107,13 +107,98 @@ function buildGltfInstance(source, cosmetics) {
     if (clip) actions[key] = mixer.clipAction(clip);
   }
 
-  return { root: wrapper, mixer, actions };
+  return { root: wrapper, mixer, actions, walkRig: createProceduralWalkRig(clone) };
+}
+
+function createProceduralWalkRig(model) {
+  const findPart = (pattern) => {
+    let match = null;
+    model.traverse((node) => {
+      if (!match && node.isBone && pattern.test(node.name.toLowerCase())) match = node;
+    });
+    return match;
+  };
+  const capture = (node) => (node ? { node, baseX: node.rotation.x } : null);
+  return {
+    model,
+    baseY: model.position.y,
+    baseRoll: model.rotation.z,
+    elapsed: 0,
+    hip: capture(findPart(/hips|pelvis/)),
+    armL: capture(findPart(/left.*(arm|shoulder)|(^|[_-])l.*arm/)),
+    armR: capture(findPart(/right.*(arm|shoulder)|(^|[_-])r.*arm/)),
+    legL: capture(findPart(/left.*(leg|thigh|upleg)|(^|[_-])l.*(leg|thigh)/)),
+    legR: capture(findPart(/right.*(leg|thigh|upleg)|(^|[_-])r.*(leg|thigh)/)),
+  };
+}
+
+function animateProceduralWalk(rig, { speed, dt, jumping, walking = false, walkTime = 0 }) {
+  rig.elapsed += dt;
+  const moving = walking && speed > 0.02 && !jumping;
+  const wave = Math.sin(walkTime * 8);
+  const blend = Math.min(1, dt * 11);
+  const target = (part, amount) => (moving ? part.baseX + wave * amount * speed : part.baseX);
+  const apply = (part, amount) => {
+    if (part) part.node.rotation.x = THREE.MathUtils.lerp(part.node.rotation.x, target(part, amount), blend);
+  };
+
+  apply(rig.legL, 0.55);
+  if (rig.legR) rig.legR.node.rotation.x = THREE.MathUtils.lerp(rig.legR.node.rotation.x, moving ? rig.legR.baseX - wave * 0.55 * speed : rig.legR.baseX, blend);
+  if (rig.armL) rig.armL.node.rotation.x = THREE.MathUtils.lerp(rig.armL.node.rotation.x, moving ? rig.armL.baseX - wave * 0.6 : rig.armL.baseX, blend);
+  if (rig.armR) rig.armR.node.rotation.x = THREE.MathUtils.lerp(rig.armR.node.rotation.x, moving ? rig.armR.baseX + wave * 0.6 : rig.armR.baseX, blend);
+
+  const hasLimbBones = rig.armL || rig.armR || rig.legL || rig.legR;
+  if (!hasLimbBones) {
+    // Static GLBs have no joints to swing, so animate the mesh itself. The
+    // small bob/roll is restored smoothly when input and velocity stop.
+    const bob = moving ? Math.sin(rig.elapsed * 10) * 0.08 : 0;
+    const roll = moving ? Math.sin(rig.elapsed * 5) * 0.05 : 0;
+    rig.model.position.y = THREE.MathUtils.lerp(rig.model.position.y, rig.baseY + bob, blend);
+    rig.model.rotation.z = THREE.MathUtils.lerp(rig.model.rotation.z, rig.baseRoll + roll, blend);
+    return;
+  }
+
+  const bob = moving ? Math.abs(wave) * 0.035 * speed : 0;
+  rig.model.position.y = THREE.MathUtils.lerp(rig.model.position.y, rig.baseY + bob, blend);
+  rig.model.rotation.z = THREE.MathUtils.lerp(rig.model.rotation.z, rig.baseRoll, blend);
+}
+
+function createCharacterMaterial(meshName, cosmetics) {
+  const name = meshName.toLowerCase();
+  let material;
+  if (name.includes("hair")) {
+    material = new THREE.MeshStandardMaterial({
+      color: cosmetics.hair || "#e0e7ff",
+      emissive: "#38bdf8",
+      emissiveIntensity: 0.2,
+      roughness: 0.45,
+    });
+  } else if (name.includes("jacket") || name.includes("top") || name.includes("cloth") || name.includes("outfit")) {
+    material = new THREE.MeshStandardMaterial({ color: cosmetics.jacket || "#ffffff", roughness: 0.4 });
+  } else if (name.includes("body") || name.includes("skin") || name.includes("face") || name.includes("head")) {
+    material = new THREE.MeshStandardMaterial({ color: cosmetics.skin || "#ffdfd3", roughness: 0.6 });
+  } else {
+    material = new THREE.MeshStandardMaterial({ color: "#111115", roughness: 0.7, metalness: 0.1 });
+  }
+  material.visible = true;
+  material.needsUpdate = true;
+  return material;
+}
+
+function addCharacterFillLight(root) {
+  // This follows the character (and survives GLB hot-swaps because it is
+  // attached to the new root) without casting extra shadows into the room.
+  const fill = new THREE.PointLight("#ffffff", 2.5, 6);
+  fill.position.set(0, 2, 1.5);
+  fill.castShadow = false;
+  root.add(fill);
 }
 
 function activateGltf(handle, built) {
   handle.root = built.root;
   handle.mixer = built.mixer;
   handle.actions = built.actions;
+  handle.walkRig = built.walkRig;
   handle.isGltf = true;
   handle.currentAction = built.actions.idle || Object.values(built.actions)[0];
   handle.currentAction?.play();
@@ -138,6 +223,7 @@ export function spawnCharacter(scene, cosmetics = {}) {
     isGltf: false,
     phaseRef: { value: 0 },
     currentAction: null,
+    walkRig: null,
   };
 
   if (resolvedSource) {
@@ -150,6 +236,7 @@ export function spawnCharacter(scene, cosmetics = {}) {
 
   if (!handle.isGltf) {
     handle.root = buildCharacter(cosmetics);
+    addCharacterFillLight(handle.root);
     preloadCharacterAsset().then((source) => {
       if (!source || handle.isGltf) return; // no GLB, or already swapped via another path
       try {
@@ -165,7 +252,7 @@ export function spawnCharacter(scene, cosmetics = {}) {
 
   scene.add(handle.root);
 
-  handle.animate = ({ speed = 0, dt = 0, jumping = false, turnRate = 0 }) => {
+  handle.animate = ({ speed = 0, dt = 0, jumping = false, turnRate = 0, walking = false, walkTime = 0 }) => {
     if (handle.isGltf && handle.mixer) {
       const desired = jumping ? "jump" : speed > 0.65 ? "run" : speed > 0.02 ? "walk" : "idle";
       const next = handle.actions[desired] || handle.actions.idle;
@@ -175,16 +262,11 @@ export function spawnCharacter(scene, cosmetics = {}) {
         handle.currentAction = next;
       }
       handle.mixer.update(dt);
+      animateProceduralWalk(handle.walkRig, { speed, dt, jumping, walking, walkTime });
       return;
     }
-    animateCharacter(handle.root, { speed, dt, jumping, phaseRef: handle.phaseRef, turnRate });
+    animateCharacter(handle.root, { speed, dt, jumping, phaseRef: handle.phaseRef, turnRate, walking, walkTime });
   };
 
   return handle;
-}
-
-function applyCosmeticTint(material, { hair, jacket }) {
-  const name = (material.name || "").toLowerCase();
-  if (hair && /hair/.test(name)) material.color?.set(hair);
-  if (jacket && /(jacket|cloth|outfit|top)/.test(name)) material.color?.set(jacket);
 }

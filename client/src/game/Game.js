@@ -9,6 +9,7 @@ import { StoryManager } from "./StoryManager.js";
 import { DialogueSequencer } from "./Dialogue.js";
 import { flickerHologram } from "./CharacterModel.js";
 import { PostFX } from "./PostFX.js";
+import { Waypoint } from "./Waypoint.js";
 
 const GATE_FOR_ACT = { 1: "gate1", 2: "gate2", 3: "gate3", 4: "gate4", 5: "gate5" };
 const SPAWN_FOR_ACT = { 1: "spawn", 2: "zone2Spawn", 3: "zone3Spawn", 4: "zone4Spawn", 5: "zone5Spawn", 6: "zone6Spawn" };
@@ -24,6 +25,7 @@ export class Game {
     this.paused = false;
     this.dialogueActive = false;
     this._activeBeat = null;
+    this._lastGateWarning = 0;
 
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 300);
@@ -33,6 +35,7 @@ export class Game {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
 
     this.postfx = new PostFX(this.renderer, this.scene, this.camera);
 
@@ -50,20 +53,22 @@ export class Game {
 
   init(cosmetics, network, existingPlayers = []) {
     this.network = network;
-    this.world = createWorld(this.scene);
+    this.world = createWorld(this.scene, this.colliderMeshesRef.current);
     this.scene.updateMatrixWorld(true);
-    this.colliderMeshesRef.current = this.world.colliders.map((c) => c.mesh);
+    this.colliderMeshesRef.current.push(...this.world.colliders.map((c) => c.mesh));
 
     this.player = new PlayerController(this.scene, this.world.colliders, cosmetics);
     this.player.teleport(this.world.anchors.spawn);
 
     this.cameraRig = new CameraRig(this.camera, this.colliderMeshesRef);
+    this.cameraRig.faceTarget(this.player.position, this.world.anchors.mainDesk);
     this.input = new Input(this.canvas);
 
     this.story = new StoryManager((evt) => this._onStoryEvent(evt));
     this.interactables = new Interactables(this.world, this.story, {
       onTrigger: (beat) => this._onBeatTrigger(beat),
     });
+    this.waypoint = new Waypoint(this.scene);
     this.dialogue = new DialogueSequencer({
       onLine: (line, isLast) => this.cb.onDialogueLine?.(line, isLast),
       onDone: () => this._onDialogueDone(),
@@ -146,8 +151,25 @@ export class Game {
     const act = this.story.current;
     const gateKey = GATE_FOR_ACT[act.key];
     if (gateKey) unlockGate(this.world, gateKey);
+    const nextActGroup = this.world.actGroups?.[act.key + 1];
+    if (nextActGroup) nextActGroup.visible = true;
     this.network?.sendAct(act.key + 1);
     this.cb.onActComplete?.(act, false);
+  }
+
+  _checkLockedBoundary() {
+    const gateKey = GATE_FOR_ACT[this.story.act];
+    const gate = gateKey && this.world.gates[gateKey];
+    if (!gate || gate.userData.unlocked || this.story.isActComplete()) return;
+
+    const width = gate.geometry.parameters.width / 2 + 0.8;
+    const depth = gate.geometry.parameters.depth / 2 + 1.1;
+    if (Math.abs(this.player.position.x - gate.position.x) > width || Math.abs(this.player.position.z - gate.position.z) > depth) return;
+
+    const now = performance.now();
+    if (now - this._lastGateWarning < 1800) return;
+    this._lastGateWarning = now;
+    this.cb.onError?.("Access Denied: Complete current objectives first");
   }
 
   _finishWithEnding(key) {
@@ -199,9 +221,11 @@ export class Game {
       this.cameraRig.applyLook(look.dx, look.dy);
       this.cameraRig.applyZoom(this.input.consumeWheel());
       this.player.update(dt, this.input, this.cameraRig);
+      this._checkLockedBoundary();
 
       const { promptText } = this.interactables.update(dt, this.player.position, this.input);
       this.cb.onPrompt?.(promptText);
+      this.waypoint.update(this.interactables.navigationTarget(this.player.position), dt);
 
       if (this.network?.connected) {
         this.network.sendState({
@@ -217,6 +241,8 @@ export class Game {
       this.input.consumeLook();
       this.input.consumeWheel();
     }
+
+    if (this.dialogueActive || this.paused) this.waypoint?.update(null, dt);
 
     this.cameraRig.update(this.player.position, dt);
 
@@ -234,6 +260,7 @@ export class Game {
     this.running = false;
     window.removeEventListener("resize", this._resize);
     this.input?.dispose();
+    this.waypoint?.dispose(this.scene);
     for (const rp of this.remotePlayers.values()) rp.dispose(this.scene);
   }
 }
