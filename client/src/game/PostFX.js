@@ -13,6 +13,10 @@ const GradeShader = {
     time: { value: 0 },
     vignetteStrength: { value: 0.32 },
     grainStrength: { value: 0.016 },
+    // Story-driven red bleed (Act I's apartment) plus a one-shot white flash
+    // for the instant the lighting turns over. Both idle at 0.
+    redWash: { value: 0 },
+    flash: { value: 0 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -26,6 +30,8 @@ const GradeShader = {
     uniform float time;
     uniform float vignetteStrength;
     uniform float grainStrength;
+    uniform float redWash;
+    uniform float flash;
     varying vec2 vUv;
 
     float hash(vec2 p) {
@@ -45,6 +51,14 @@ const GradeShader = {
       // gentle filmic contrast curve
       color.rgb = pow(color.rgb, vec3(1.04));
       color.rgb = mix(color.rgb, smoothstep(0.0, 1.0, color.rgb), 0.25);
+
+      // story red wash — pushes everything toward blood red while keeping
+      // shape readable (luminance survives, the blue/green channels don't)
+      if (redWash > 0.0) {
+        vec3 bled = vec3(lum * 1.5 + 0.035, lum * 0.17, lum * 0.19);
+        color.rgb = mix(color.rgb, mix(color.rgb * vec3(1.12, 0.34, 0.36), bled, 0.55), redWash);
+      }
+      color.rgb += vec3(flash, flash * 0.12, flash * 0.14);
 
       // vignette
       vec2 d = vUv - 0.5;
@@ -79,6 +93,11 @@ export class PostFX {
     this.composer.addPass(this.grade);
 
     this.composer.addPass(new OutputPass());
+
+    this._wash = 0;
+    this._washTarget = 0;
+    this._washSpeed = 0.4;
+    this._flash = 0;
   }
 
   setSize(w, h) {
@@ -86,9 +105,28 @@ export class PostFX {
     this.bloom.setSize(w, h);
   }
 
+  /** Fades the red story wash toward `target` (0..1) over `duration` seconds. */
+  setRedWash(target, { duration = 2.6 } = {}) {
+    this._washTarget = THREE.MathUtils.clamp(target, 0, 1);
+    this._washSpeed = 1 / Math.max(0.1, duration);
+  }
+
+  /** One-shot bright hit, decaying on its own — used when the lights turn over. */
+  pulseFlash(amount = 0.35) {
+    this._flash = Math.max(this._flash, amount);
+  }
+
   render(dt) {
     this.time += dt;
     this.grade.uniforms.time.value = this.time;
+
+    this._wash = THREE.MathUtils.damp(this._wash, this._washTarget, this._washSpeed * 3, dt);
+    if (Math.abs(this._wash - this._washTarget) < 0.002) this._wash = this._washTarget;
+    this.grade.uniforms.redWash.value = this._wash;
+
+    this._flash = Math.max(0, this._flash - dt * 0.9);
+    this.grade.uniforms.flash.value = this._flash;
+
     this.composer.render(dt);
   }
 }

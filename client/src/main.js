@@ -112,11 +112,25 @@ function startGame(existingPlayers = []) {
     onChat: (entry) => appendChat(entry.name, entry.text),
     onActComplete: (act, isFinal) => showActScreen(act, isFinal),
     onDialogueLine: (line, isLast) => showDialogueLine(line, isLast),
+    onError: (text) => showToast(text),
   });
   game.init(cosmetics, network, existingPlayers);
   hudVisible = true;
   el("hud").classList.remove("hidden");
   game.start();
+}
+
+let toastTimer = null;
+function showToast(text) {
+  const box = el("hud-toast");
+  if (!text) {
+    box.classList.add("hidden");
+    return;
+  }
+  box.textContent = text;
+  box.classList.remove("hidden");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => box.classList.add("hidden"), 2600);
 }
 
 function showDialogueLine(line, isLast) {

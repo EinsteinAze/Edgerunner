@@ -348,6 +348,152 @@ export function drawingTexture(key) {
   });
 }
 
+// --- Act I "SAVE US" props -------------------------------------------------
+// Both the note Lucy finds on the floor and the writing that only shows up
+// once the apartment turns red are the same handwriting, so they share one
+// drawing routine: smeared, uneven strokes with drips running off the letters.
+
+const BLOOD = "#a8070e";
+const BLOOD_DARK = "#61050a";
+
+function drawBloodText(ctx, text, { x, y, size, angle = -0.04, drips = 7, seedKey = text }) {
+  const rnd = rand(hashStr(seedKey) + 47);
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+  ctx.font = `bold ${size}px "Courier New", monospace`;
+
+  // A darker offset pass under the main stroke reads as blood pooling where
+  // the finger pressed hardest — flat single-color text looks like paint.
+  ctx.globalAlpha = 0.8;
+  ctx.fillStyle = BLOOD_DARK;
+  ctx.fillText(text, 3, 4);
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = BLOOD;
+  ctx.fillText(text, 0, 0);
+
+  const width = ctx.measureText(text).width;
+  for (let i = 0; i < drips; i++) {
+    const dx = -width / 2 + rnd() * width;
+    const len = size * (0.2 + rnd() * 0.95);
+    const thickness = 2 + rnd() * 4.5;
+    ctx.save();
+    ctx.translate(dx, 0);
+    const grad = ctx.createLinearGradient(0, 0, 0, len);
+    grad.addColorStop(0, BLOOD);
+    grad.addColorStop(1, "rgba(97, 5, 10, 0)");
+    ctx.fillStyle = grad;
+    ctx.fillRect(-thickness / 2, 0, thickness, len);
+    ctx.fillStyle = BLOOD_DARK;
+    ctx.globalAlpha = 0.75;
+    ctx.beginPath();
+    ctx.arc(0, len, thickness * 0.55, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+/** The sheet of paper under Lucy's bed — "SAVE US" dragged across it in blood. */
+export function bloodNoteTexture(key = "note") {
+  return memo(`bloodnote:${key}`, () => {
+    const size = 512;
+    const cv = canvas(size);
+    const ctx = cv.getContext("2d");
+    const rnd = rand(hashStr(key) + 53);
+
+    ctx.fillStyle = "#d8d0bc";
+    ctx.fillRect(0, 0, size, size);
+
+    // paper fibre + age spots
+    ctx.globalAlpha = 0.07;
+    for (let i = 0; i < 900; i++) {
+      ctx.fillStyle = rnd() > 0.5 ? "#000000" : "#8b7355";
+      ctx.fillRect(rnd() * size, rnd() * size, 1, 1);
+    }
+    ctx.globalAlpha = 0.16;
+    for (let i = 0; i < 7; i++) {
+      const cx = rnd() * size;
+      const cy = rnd() * size;
+      const r = 30 + rnd() * 90;
+      const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+      grad.addColorStop(0, "#7a6642");
+      grad.addColorStop(1, "transparent");
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // creases from being folded small enough to slide under a door
+    ctx.strokeStyle = "rgba(90, 78, 58, 0.35)";
+    ctx.lineWidth = 2;
+    for (const f of [0.34, 0.68]) {
+      ctx.beginPath();
+      ctx.moveTo(0, size * f);
+      ctx.lineTo(size, size * f + (rnd() - 0.5) * 8);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(size * f, 0);
+      ctx.lineTo(size * f + (rnd() - 0.5) * 8, size);
+      ctx.stroke();
+    }
+
+    // a smeared handprint edge — whoever wrote this steadied the page
+    ctx.globalAlpha = 0.22;
+    ctx.fillStyle = BLOOD_DARK;
+    ctx.beginPath();
+    ctx.ellipse(size * 0.14, size * 0.78, 46, 26, 0.7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    drawBloodText(ctx, "SAVE US", { x: size / 2, y: size * 0.48, size: 92, angle: -0.05, drips: 9, seedKey: `${key}:save` });
+    drawBloodText(ctx, "- M", { x: size * 0.72, y: size * 0.74, size: 44, angle: 0.09, drips: 3, seedKey: `${key}:sig` });
+
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  });
+}
+
+/**
+ * Writing that is invisible under the apartment's normal warm practicals and
+ * only resolves once the room turns red — drawn on a transparent canvas so
+ * the wall behind it stays visible.
+ */
+export function bloodScrawlTexture(key, lines = ["MARA"]) {
+  return memo(`bloodscrawl:${key}:${lines.join("|")}`, () => {
+    // 2:1 to match the wall plane it maps onto. Lines are spaced so the drips
+    // running off the bottom row still land inside the canvas.
+    const w = 640;
+    const h = 320;
+    const cv = document.createElement("canvas");
+    cv.width = w;
+    cv.height = h;
+    const ctx = cv.getContext("2d");
+
+    const step = h / (lines.length + 1.05);
+    lines.forEach((line, i) => {
+      drawBloodText(ctx, line, {
+        x: w / 2,
+        y: step * (i + 0.9),
+        size: Math.min(64, ((w * 0.85) / Math.max(4, line.length)) * 1.5),
+        angle: (i % 2 === 0 ? -1 : 1) * 0.03,
+        drips: 5,
+        seedKey: `${key}:${i}`,
+      });
+    });
+
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  });
+}
+
 function clamp8(v) {
   return v < 0 ? 0 : v > 255 ? 255 : v;
 }

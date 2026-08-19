@@ -35,12 +35,68 @@ export const ACTS = {
         lines: [{ speaker: NARR, text: "Old personal data shards. Fragments of a life before all this." }],
       },
       {
+        id: "bloodNote",
+        anchor: "bloodNote",
+        radius: 1.9,
+        trigger: "interact",
+        prompt: "Pick up the stained paper",
+        lines: [
+          { speaker: NARR, text: "A sheet of paper lies half under the bed, folded down to the size of a shard." },
+          { speaker: L, text: '"That wasn\'t there yesterday."' },
+          { speaker: NARR, text: "She unfolds it. The writing isn't ink — it's dried to a dull, cracked brown-red." },
+          { speaker: NARR, text: 'Two words, dragged across the page: "SAVE US."' },
+          { speaker: NARR, text: "Below them, smaller, signed with a single letter: M." },
+          { speaker: L, text: '"Someone was in my apartment."' },
+          { speaker: NARR, text: "There's a mark under the signature — a crude arrow, pointing at the desk." },
+        ],
+      },
+      {
+        id: "accessKey",
+        anchor: "accessKey",
+        radius: 1.8,
+        trigger: "interact",
+        prompt: "Search the floor by the desk",
+        requires: ["bloodNote"],
+        lockedPrompts: { bloodNote: "Nothing under here — but something pale is lying by the bed" },
+        lines: [
+          { speaker: NARR, text: "Lucy crouches and sweeps her hand under the desk. Something small and cold snags her fingers." },
+          { speaker: NARR, text: "An Arasaka access key. Old model — the kind they stopped issuing years before she got out." },
+          { speaker: NARR, text: "Someone has scratched two characters into the casing by hand: M-02." },
+          { speaker: L, text: '"...Mara\'s number."' },
+          { speaker: L, text: '"Someone put this where they knew I\'d look."' },
+        ],
+      },
+      {
+        id: "bloodWall",
+        anchor: "bloodWall",
+        radius: 2.4,
+        trigger: "interact",
+        prompt: "Read the writing on the wall",
+        requires: ["bloodNote", "accessKey"],
+        // Invisible until the room turns red — no prompt should exist before then.
+        hiddenUntilUnlocked: true,
+        lines: [
+          { speaker: NARR, text: "Under the red light the wall gives up what it was hiding — the same hand, the same dried red." },
+          { speaker: NARR, text: "Four names: MARA · NOAH · SERA · KIAN." },
+          { speaker: NARR, text: "And beneath them, in a shakier stroke, a fifth: LUCY." },
+          { speaker: L, text: '"Only someone from the program knows these names."' },
+          { speaker: L, text: '"Everyone from the program is dead."' },
+          { speaker: NARR, text: "Behind her, the cyberdeck's standby light blinks awake." },
+        ],
+      },
+      {
         id: "cyberdeck",
         anchor: "cyberdeck",
         radius: 2.2,
         trigger: "interact",
-        prompt: "Access cyberdeck",
+        prompt: "Unlock the cyberdeck with the key",
+        requires: ["accessKey", "bloodWall"],
+        lockedPrompts: {
+          accessKey: "The deck is locked — an Arasaka key is missing",
+          bloodWall: "The deck holds. Whatever is written on that wall comes first",
+        },
         lines: [
+          { speaker: NARR, text: "Lucy slots the scratched access key into the deck. It takes on the first try." },
           { speaker: NARR, text: "BEEP. A mysterious data packet arrives." },
           { speaker: L, text: '"What?"' },
           { speaker: "UNKNOWN", text: '"If you remember the facility, you remember me."' },
@@ -380,6 +436,16 @@ export const ACTS = {
 
 export const ACT_ORDER = [1, 2, 3, 4, 5, 6];
 
+// Plays automatically the moment Lucy holds both the note and the key — the
+// point where the apartment's lighting turns over to red and the hidden
+// writing by the window becomes readable.
+export const ACT1_ALARM_LINES = [
+  { speaker: NARR, text: "The apartment's lights stutter, drop out — and come back wrong." },
+  { speaker: NARR, text: "Warm white bleeds down into a deep arterial red. The room looks like the inside of something." },
+  { speaker: L, text: '"That\'s not my grid."' },
+  { speaker: NARR, text: "In the red, the wall by the window stops being blank. There's writing on it." },
+];
+
 export class StoryManager {
   constructor(onChange) {
     this.act = 1;
@@ -398,6 +464,22 @@ export class StoryManager {
 
   isObjectiveDone(id) {
     return this.done.has(id);
+  }
+
+  /**
+   * A beat with `requires` stays inert until every prerequisite objective is
+   * done — this is what turns a room full of independently readable props
+   * into an ordered sequence.
+   */
+  isBeatUnlocked(beat) {
+    if (!beat?.requires) return true;
+    return beat.requires.every((id) => this.done.has(id));
+  }
+
+  /** First unmet prerequisite, so a locked beat can explain *what* is missing. */
+  missingRequirement(beat) {
+    if (!beat?.requires) return null;
+    return beat.requires.find((id) => !this.done.has(id)) || null;
   }
 
   complete(id) {
@@ -428,7 +510,19 @@ export class StoryManager {
   }
 
   objectiveSummary() {
-    const visible = this.current.beats.filter((b) => b.trigger !== "proximity" && b.prompt);
-    return visible.map((b) => `${this.done.has(b.id) ? "✓" : "○"} ${b.prompt}`).join("   ");
+    const visible = this.current.beats.filter(
+      (b) =>
+        b.trigger !== "proximity" &&
+        b.prompt &&
+        // Beats tied to something that isn't in the room yet stay off the list
+        // until they exist — listing them would spoil their reveal.
+        !(b.hiddenUntilUnlocked && !this.isBeatUnlocked(b))
+    );
+    return visible
+      .map((b) => {
+        if (this.done.has(b.id)) return `✓ ${b.prompt}`;
+        return this.isBeatUnlocked(b) ? `○ ${b.prompt}` : `⊘ ${b.prompt}`;
+      })
+      .join("\n");
   }
 }

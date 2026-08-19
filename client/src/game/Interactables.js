@@ -6,16 +6,39 @@
  * class only decides *what* is in range and *when* it should fire.
  */
 export class Interactables {
-  constructor(world, story, { onTrigger } = {}) {
+  constructor(world, story, { onTrigger, onLocked } = {}) {
     this.world = world;
     this.story = story;
     this.onTrigger = onTrigger || (() => {});
+    this.onLocked = onLocked || (() => {});
     this.pendingId = null;
   }
 
-  _candidates() {
+  /**
+   * Incomplete beats for the current act. Beats whose `requires` aren't
+   * satisfied yet are only included when `includeLocked` is set — they can
+   * still be *seen* (so the player gets a "why can't I use this" prompt) but
+   * never fire and never attract the waypoint.
+   */
+  _candidates({ includeLocked = false } = {}) {
     const act = this.story.current;
-    const list = act.beats.filter((b) => !this.story.isObjectiveDone(b.id));
+    const list = [];
+    for (const beat of act.beats) {
+      if (this.story.isObjectiveDone(beat.id)) continue;
+      if (this.story.isBeatUnlocked(beat)) {
+        list.push(beat);
+        continue;
+      }
+      // `hiddenUntilUnlocked` props aren't in the room yet (the writing that
+      // only the red light reveals) — they get no prompt at all.
+      if (!includeLocked || beat.hiddenUntilUnlocked) continue;
+      const missing = this.story.missingRequirement(beat);
+      list.push({
+        ...beat,
+        locked: true,
+        lockedPrompt: beat.lockedPrompts?.[missing] || beat.lockedPrompt || "Locked",
+      });
+    }
 
     const finalUnlocked = act.endings && this.story.isObjectiveDone("childrenGathering");
     if (finalUnlocked) {
@@ -57,9 +80,11 @@ export class Interactables {
       return { promptText: null };
     }
 
-    const candidates = this._candidates();
+    const candidates = this._candidates({ includeLocked: true });
     let nearest = null;
     let nearestDist = Infinity;
+    let nearestLocked = null;
+    let nearestLockedDist = Infinity;
 
     for (const beat of candidates) {
       const anchor = this.world.anchors[beat.anchor];
@@ -71,13 +96,29 @@ export class Interactables {
       const dx = playerPos.x - ap.x;
       const dz = playerPos.z - ap.z;
       const dist = Math.hypot(dx, dz);
-      if (dist <= beat.radius && dist < nearestDist) {
+      if (dist > beat.radius) continue;
+      if (beat.locked) {
+        if (dist < nearestLockedDist) {
+          nearestLocked = beat;
+          nearestLockedDist = dist;
+        }
+      } else if (dist < nearestDist) {
         nearest = beat;
         nearestDist = dist;
       }
     }
 
+    // A locked beat never eclipses one the player can actually do, even when
+    // it's closer — props sit close together (the key lies beside the deck).
+    if (!nearest) nearest = nearestLocked;
     if (!nearest) return { promptText: null };
+
+    if (nearest.locked) {
+      // Pressing E on a locked beat is deliberate feedback, not a no-op:
+      // the player gets told what's still missing.
+      if (input.consumeInteract()) this.onLocked(nearest);
+      return { promptText: nearest.lockedPrompt || "Locked" };
+    }
 
     if (nearest.trigger === "proximity") {
       this.pendingId = nearest.id;
