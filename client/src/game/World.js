@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { buildCharacter, makeHologram } from "./CharacterModel.js";
-import { grungeSet, metalSet, floorSet, screenTexture, warningSignTexture, drawingTexture } from "./Textures.js";
+import { grungeSet, metalSet, floorSet, screenTexture, warningSignTexture, drawingTexture, bloodNoteTexture, bloodScrawlTexture } from "./Textures.js";
 import { trySwapForAsset, spawnAsset } from "./AssetLoader.js";
 
 // ---------------------------------------------------------------------------
@@ -231,8 +231,12 @@ function addCeilingLight(scene, flickerList, { x, y = 5.8, z, color = "#cfe0ff",
   light.position.set(x, y - 0.3, z);
   light.castShadow = false;
   scene.add(light);
-  if (flicker) flickerList.push({ light, glow, owner: scene, base: intensity, glowBase: 0.6, speed: 3 + Math.random() * 4, seed: Math.random() * 100, broken: Math.random() < 0.5 });
-  return light;
+  let flickerEntry = null;
+  if (flicker) {
+    flickerEntry = { light, glow, owner: scene, base: intensity, glowBase: 0.6, speed: 3 + Math.random() * 4, seed: Math.random() * 100, broken: Math.random() < 0.5 };
+    flickerList.push(flickerEntry);
+  }
+  return { light, glow, housing, flickerEntry };
 }
 
 /**
@@ -632,6 +636,104 @@ function addStaticWorldMap(scene, colliders, cameraColliders, url) {
 }
 
 // ---------------------------------------------------------------------------
+// Act I — the "SAVE US" props and the red-light shift
+// ---------------------------------------------------------------------------
+
+const ALARM_RED = new THREE.Color("#ff141c");
+
+/**
+ * State for the apartment's colour turn. Once `active` is set, `t` ramps
+ * 0 -> 1 inside the per-frame light updater and every registered practical
+ * bleeds from its own colour toward deep red, the dedicated blood-red
+ * practical fades up, and the hidden wall writing fades in.
+ */
+function createApartmentAlarm() {
+  return { active: false, t: 0, lights: [], glows: [], reveals: [], redLight: null, redPeak: 16 };
+}
+
+/** Registers a practical so the alarm can recolour it without losing its flicker. */
+function registerAlarmLight(alarm, light, flickerEntry = null) {
+  alarm.lights.push({ light, flickerEntry, baseColor: light.color.clone(), baseIntensity: light.intensity });
+  return light;
+}
+
+function registerAlarmGlow(alarm, mesh) {
+  if (mesh) alarm.glows.push({ mesh, baseColor: mesh.material.color.clone() });
+  return mesh;
+}
+
+/** The folded sheet Lucy finds under the bed — flat on the floor, slightly skewed. */
+function addBloodNote(scene, { x, z, ry = 0, size = 0.62 }) {
+  const mesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(size, size),
+    new THREE.MeshStandardMaterial({ map: bloodNoteTexture("act1"), roughness: 0.92, metalness: 0, side: THREE.DoubleSide })
+  );
+  mesh.rotation.set(-Math.PI / 2, 0, ry);
+  mesh.position.set(x, 0.02, z);
+  mesh.receiveShadow = true;
+  scene.add(mesh);
+  return mesh;
+}
+
+/**
+ * The Arasaka access key, tucked against a desk leg. Returned as a group
+ * (card + its own tiny glint light) so Game.js can hide the whole thing in
+ * one call once Lucy pockets it.
+ */
+function addAccessKey(scene, { x, z, ry = 0 }) {
+  const group = new THREE.Group();
+  group.position.set(x, 0, z);
+  group.rotation.y = ry;
+  scene.add(group);
+
+  const card = new THREE.Mesh(
+    new THREE.BoxGeometry(0.17, 0.02, 0.11),
+    new THREE.MeshStandardMaterial({ color: "#c9b45a", emissive: "#f6e94a", emissiveIntensity: 0.35, roughness: 0.35, metalness: 0.85 })
+  );
+  card.position.set(0, 0.03, 0);
+  card.rotation.z = 0.12;
+  card.castShadow = true;
+  group.add(card);
+
+  const chip = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.005, 0.04), neonMat("#18e0e0", 2.2));
+  chip.position.set(0.04, 0.045, 0);
+  group.add(chip);
+
+  // A small practical of its own — without it the key is a dark speck on a
+  // dark floor and "find the key" turns into pixel-hunting.
+  const glint = new THREE.PointLight("#f6e94a", 1.6, 2.6, 2);
+  glint.position.set(0, 0.22, 0);
+  group.add(glint);
+
+  return group;
+}
+
+/**
+ * Writing that exists on the wall from the start but is invisible until the
+ * room turns red. Kept hidden (not just transparent) so it can't catch a
+ * stray highlight before its reveal.
+ */
+function addHiddenScrawl(scene, alarm, { x, y, z, ry = 0, w = 2.3, h = 1.15, key, lines }) {
+  const mesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(w, h),
+    new THREE.MeshStandardMaterial({
+      map: bloodScrawlTexture(key, lines),
+      transparent: true,
+      opacity: 0,
+      roughness: 0.95,
+      metalness: 0,
+      depthWrite: false,
+    })
+  );
+  mesh.position.set(x, y, z);
+  mesh.rotation.y = ry;
+  mesh.visible = false;
+  scene.add(mesh);
+  alarm.reveals.push(mesh);
+  return mesh;
+}
+
+// ---------------------------------------------------------------------------
 // world
 // ---------------------------------------------------------------------------
 
@@ -661,6 +763,8 @@ export function createWorld(scene, cameraColliders = []) {
   const flickerList = [];
   const crackleList = [];
   const blinkers = [];
+  const props = {};
+  const apartmentAlarm = createApartmentAlarm();
 
   // Lift the ambient fill just enough to keep room detail readable without
   // flattening the darker cyberpunk mood or competing with the neon lights.
@@ -688,7 +792,10 @@ export function createWorld(scene, cameraColliders = []) {
   scene.add(cyanRim);
   const magentaAccent = new THREE.PointLight("#ff007f", 7, 12, 2);
   magentaAccent.position.set(3.5, 3, 1.5);
-  scene.add(magentaAccent);
+  act1Group.add(magentaAccent);
+  // This one sits inside the apartment, so it turns with the room — a magenta
+  // key light left standing would fight the red instead of feeding it.
+  registerAlarmLight(apartmentAlarm, magentaAccent);
 
   // Warm, low-radius practical fill lights keep the apartment readable
   // without flattening the contrast in the rest of the story spaces.
@@ -703,15 +810,28 @@ export function createWorld(scene, cameraColliders = []) {
     point.castShadow = true;
     point.shadow.mapSize.set(512, 512);
     act1Group.add(point);
+    registerAlarmLight(apartmentAlarm, point);
   }
+
+  // Off until Lucy holds both the note and the key; then it becomes the room's
+  // dominant source and everything else just tints toward it.
+  const bloodLight = new THREE.PointLight("#ff141c", 0, 16, 2);
+  bloodLight.position.set(0, 3.4, 3);
+  act1Group.add(bloodLight);
+  apartmentAlarm.redLight = bloodLight;
 
   // ================= ZONE 1 — LUCY'S APARTMENT =================
   addRoom(act1Group, colliders, { x: 0, z: 3, w: 11, d: 16, color: "#1c1e2a", floorColor: "#232018", key: "z1" });
   anchors.spawn = new THREE.Vector3(0, 0, 5.5);
   addBox(act1Group, colliders, { w: 11, h: 6, d: 0.6, x: 0, y: 3, z: 10.7, mat: wallMat("#1c1e2a", "z1:endcap") });
 
-  addCeilingLight(act1Group, flickerList, { x: 0, z: 6, color: "#e6c99a", intensity: 1.8 });
-  addCeilingLight(act1Group, flickerList, { x: 0, z: -2, color: "#cfe0ff", intensity: 1.4, flicker: true });
+  for (const fixture of [
+    addCeilingLight(act1Group, flickerList, { x: 0, z: 6, color: "#e6c99a", intensity: 1.8 }),
+    addCeilingLight(act1Group, flickerList, { x: 0, z: -2, color: "#cfe0ff", intensity: 1.4, flicker: true }),
+  ]) {
+    registerAlarmLight(apartmentAlarm, fixture.light, fixture.flickerEntry);
+    registerAlarmGlow(apartmentAlarm, fixture.glow);
+  }
 
   anchors.window = addPropBox(act1Group, colliders, { x: -5.2, y: 2, z: 4, w: 0.3, h: 2.6, d: 3.2, color: "#18e0e0", key: "window" });
   // Keep the original box only as an interaction/collision anchor; the city
@@ -727,6 +847,24 @@ export function createWorld(scene, cameraColliders = []) {
   addMonitor(act1Group, { x: -2.4, y: 1.1, z: -1.42, ry: Math.PI, key: "cyberdeck-screen", title: "NET-ACCESS", color: "#ff2fd0", accent: "#18e0e0", standH: 0.4 });
   anchors.mainDesk = new THREE.Vector3(-2.4, 0, -0.5);
   addDesk(act1Group, colliders, { x: -2.4, z: -0.5, ry: 0, key: "apt-desk" });
+
+  // --- Act I objective props -------------------------------------------------
+  // Note by the bed -> key under the desk -> writing that only the red light
+  // reveals. Deliberately spread across the three corners of the apartment so
+  // the act is walked rather than read from one spot.
+  anchors.bloodNote = addBloodNote(act1Group, { x: 4.05, z: 8.45, ry: 0.42 });
+  props.bloodNote = anchors.bloodNote;
+
+  anchors.accessKey = addAccessKey(act1Group, { x: -3.3, z: -0.85, ry: 0.5 });
+  props.accessKey = anchors.accessKey;
+
+  // Same wall as the window but clear of its interaction radius, so the two
+  // never compete for the prompt.
+  anchors.bloodWall = addHiddenScrawl(act1Group, apartmentAlarm, {
+    x: -5.14, y: 2.25, z: 0.2, ry: Math.PI / 2, w: 2.4, h: 1.2,
+    key: "apt-names", lines: ["MARA  NOAH", "SERA  KIAN", "LUCY"],
+  });
+  props.bloodWall = anchors.bloodWall;
 
   addDrawing(act1Group, { x: 5.17, y: 1.6, z: 0, ry: -Math.PI / 2, key: "apt-drawing", scale: 0.6 });
   addWarningSign(act1Group, { x: -5.17, y: 1.1, z: -1.5, ry: Math.PI / 2, text: "NO SIGNAL" });
@@ -918,10 +1056,22 @@ export function createWorld(scene, cameraColliders = []) {
 
   addStaticWorldMap(scene, colliders, cameraColliders, ENV_MODEL.world);
 
-  return { colliders, gates, anchors, actGroups, act2Group, holograms, updateLights: makeLightUpdater(flickerList, blinkers, scene, crackleList) };
+  return {
+    colliders,
+    gates,
+    anchors,
+    props,
+    actGroups,
+    act2Group,
+    holograms,
+    updateLights: makeLightUpdater(flickerList, blinkers, scene, apartmentAlarm, crackleList),
+    triggerApartmentAlarm: () => {
+      apartmentAlarm.active = true;
+    },
+  };
 }
 
-function makeLightUpdater(flickerList, _blinkers, scene, crackleList = []) {
+function makeLightUpdater(flickerList, _blinkers, scene, apartmentAlarm, crackleList = []) {
   const isVisible = (object) => {
     for (let node = object; node; node = node.parent) if (!node.visible) return false;
     return true;
@@ -936,15 +1086,21 @@ function makeLightUpdater(flickerList, _blinkers, scene, crackleList = []) {
     for (const f of flickerList) {
       if (!isVisible(f.owner)) continue;
       if (f.siren) {
-        f.light.intensity = f.base * (0.5 + 0.5 * Math.sin(t * f.speed + f.seed));
+        f.factor = 0.5 + 0.5 * Math.sin(t * f.speed + f.seed);
+        f.light.intensity = f.base * f.factor;
         continue;
       }
       const n = Math.sin(t * f.speed + f.seed) * Math.sin(t * f.speed * 1.7 + f.seed * 2);
       const dip = f.broken && Math.sin(t * 0.6 + f.seed) > 0.93 ? 0.1 : 1;
       const flick = (0.82 + 0.18 * n) * dip;
+      f.factor = flick;
       f.light.intensity = f.base * flick;
       if (f.glow) f.glow.material.emissiveIntensity = f.glowBase * flick * 2.2;
     }
+
+    // Apartment colour turn — runs after the flicker pass so it wins on the
+    // fixtures it shares with it, while still riding their flicker factor.
+    if (apartmentAlarm) updateApartmentAlarm(apartmentAlarm, dt, t);
     for (const m of blinkMeshes) {
       if (!isVisible(m)) continue;
       const b = m.userData.blink;
@@ -969,6 +1125,36 @@ function makeLightUpdater(flickerList, _blinkers, scene, crackleList = []) {
       crackle.glow.scale.setScalar(active ? 0.8 + Math.random() * 1.8 : 1);
     }
   };
+}
+
+function updateApartmentAlarm(alarm, dt, t) {
+  if (alarm.active && alarm.t < 1) alarm.t = Math.min(1, alarm.t + dt / 2.6);
+  if (alarm.t <= 0) return;
+
+  const k = alarm.t;
+  const ease = k * k * (3 - 2 * k);
+  // Slow, uneven breath rather than a strobe — the room is bleeding, not alarming.
+  const pulse = 0.84 + 0.16 * Math.sin(t * 1.9) * Math.sin(t * 0.7 + 1.3);
+
+  for (const e of alarm.lights) {
+    e.light.color.copy(e.baseColor).lerp(ALARM_RED, ease * 0.94);
+    const flick = e.flickerEntry?.factor ?? 1;
+    // Dim the original practicals as they turn: the red light should read as
+    // the room losing its own lighting, not as everything getting brighter.
+    e.light.intensity = e.baseIntensity * flick * (1 - 0.55 * ease) * (1 + 0.5 * ease * pulse);
+  }
+
+  for (const g of alarm.glows) {
+    g.mesh.material.color.copy(g.baseColor).lerp(ALARM_RED, ease);
+    g.mesh.material.emissive.copy(g.baseColor).lerp(ALARM_RED, ease);
+  }
+
+  if (alarm.redLight) alarm.redLight.intensity = alarm.redPeak * ease * pulse;
+
+  for (const reveal of alarm.reveals) {
+    reveal.visible = true;
+    reveal.material.opacity = Math.min(1, ease * 1.25);
+  }
 }
 
 export function unlockGate(world, key) {

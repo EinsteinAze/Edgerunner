@@ -5,7 +5,7 @@ import { PlayerController } from "./PlayerController.js";
 import { RemotePlayer } from "./RemotePlayer.js";
 import { CameraRig } from "./CameraRig.js";
 import { Interactables } from "./Interactables.js";
-import { StoryManager } from "./StoryManager.js";
+import { StoryManager, ACT1_ALARM_LINES } from "./StoryManager.js";
 import { DialogueSequencer } from "./Dialogue.js";
 import { flickerHologram } from "./CharacterModel.js";
 import { PostFX } from "./PostFX.js";
@@ -26,6 +26,7 @@ export class Game {
     this.dialogueActive = false;
     this._activeBeat = null;
     this._lastGateWarning = 0;
+    this._apartmentAlarmFired = false;
 
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 300);
@@ -67,6 +68,7 @@ export class Game {
     this.story = new StoryManager((evt) => this._onStoryEvent(evt));
     this.interactables = new Interactables(this.world, this.story, {
       onTrigger: (beat) => this._onBeatTrigger(beat),
+      onLocked: (beat) => this.cb.onError?.(beat.lockedPrompt || "You can't use this yet"),
     });
     this.waypoint = new Waypoint(this.scene);
     this.dialogue = new DialogueSequencer({
@@ -139,10 +141,41 @@ export class Game {
   _onStoryEvent(evt) {
     if (evt.type === "objective") {
       this._refreshHud();
+      this._onObjectiveComplete(evt.key);
       if (!this.story.current.endings && this.story.isActComplete()) {
         this._completeAct();
       }
     }
+  }
+
+  _onObjectiveComplete(key) {
+    // Lucy pockets the key — the prop and its glint light go with her.
+    if (key === "accessKey") {
+      const prop = this.world.props?.accessKey;
+      if (prop) prop.visible = false;
+    }
+    this._maybeTriggerApartmentAlarm();
+  }
+
+  /**
+   * Act I's payoff: holding both the bloodied note and the access key flips
+   * the apartment's lighting over to red, which is also what makes the
+   * writing by the window readable (and unlocks the `bloodWall` beat).
+   */
+  _maybeTriggerApartmentAlarm() {
+    if (this._apartmentAlarmFired || this.story.act !== 1) return;
+    if (!this.story.isObjectiveDone("bloodNote") || !this.story.isObjectiveDone("accessKey")) return;
+
+    this._apartmentAlarmFired = true;
+    this.world.triggerApartmentAlarm?.();
+    this.postfx.pulseFlash(0.3);
+    this.postfx.setRedWash(0.62, { duration: 2.4 });
+
+    // Reached from _onDialogueDone, which has already torn down the previous
+    // line, so starting a new sequence here is safe.
+    this.dialogueActive = true;
+    this.input.releasePointerLock();
+    this.dialogue.play(ACT1_ALARM_LINES);
   }
 
   _completeAct() {
@@ -193,6 +226,8 @@ export class Game {
 
   continueToNextAct() {
     if (this.story.isFinalAct()) return;
+    // The red wash belongs to the apartment — it doesn't follow Lucy out.
+    this.postfx.setRedWash(0, { duration: 1.6 });
     this.story.advance();
     const spawnKey = SPAWN_FOR_ACT[this.story.act];
     const spawn = this.world.anchors[spawnKey];
