@@ -36,15 +36,17 @@ function floorMat(color, key) {
 }
 
 const CITY_VIEW_TEXTURE = "/models/textures/city_view.png";
-const NAME_WALL_TEXTURE = "/models/textures/namedwall.png";
+const NAME_WALL_TEXTURE = "/textures/namedwall.png";
+const NAME_WALL_TEXTURE_FALLBACK = "/models/textures/namedwall.png";
 const ARASAKA_LOGO_TEXTURE = "/models/textures/arasaka_logo.png.jpeg";
 
-function applyTextureMap(mesh, url) {
+function applyTextureMap(mesh, url, { flipY = true } = {}) {
   const textureLoader = new THREE.TextureLoader();
   textureLoader.load(
     url,
     (texture) => {
       texture.colorSpace = THREE.SRGBColorSpace;
+      texture.flipY = flipY;
       texture.magFilter = THREE.NearestFilter;
       texture.minFilter = THREE.LinearMipmapLinearFilter;
       texture.needsUpdate = true;
@@ -83,7 +85,79 @@ function applyStandardTextureMap(mesh, url) {
   );
 }
 
+/** Keeps Act II's scratched-name texture sharp and independent of facility mesh UVs. */
+function addNameWall(scene) {
+  const nameWallMaterial = new THREE.MeshStandardMaterial({
+    transparent: true,
+    roughness: 0.4,
+    emissive: new THREE.Color(0x221133),
+    emissiveIntensity: 0.6,
+    side: THREE.FrontSide,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -1,
+  });
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 1.8), nameWallMaterial);
+  mesh.name = "Mission_NameWall";
+  mesh.position.set(-6.65, 1.75, -20.0);
+  mesh.rotation.set(0, Math.PI / 2, 0);
+  mesh.castShadow = false;
+  mesh.receiveShadow = false;
+  scene.add(mesh);
+
+  const applyNameWallTexture = (nameWallTexture) => {
+    nameWallTexture.colorSpace = THREE.SRGBColorSpace;
+    nameWallTexture.needsUpdate = true;
+    nameWallMaterial.map = nameWallTexture;
+    nameWallMaterial.emissiveMap = nameWallTexture;
+    nameWallMaterial.needsUpdate = true;
+  };
+  const textureLoader = new THREE.TextureLoader();
+  textureLoader.load(
+    NAME_WALL_TEXTURE,
+    applyNameWallTexture,
+    undefined,
+    () => textureLoader.load(
+      NAME_WALL_TEXTURE_FALLBACK,
+      applyNameWallTexture,
+      undefined,
+      (error) => console.warn(`[World] Could not load name-wall texture: ${NAME_WALL_TEXTURE}`, error)
+    )
+  );
+
+  const nameWallLight = new THREE.SpotLight(0xe9d5ff, 2.5, 6.0);
+  nameWallLight.position.set(-5.2, 2.8, -20.0);
+  nameWallLight.target.position.set(-6.65, 1.75, -20.0);
+  nameWallLight.castShadow = false;
+  scene.add(nameWallLight, nameWallLight.target);
+  return mesh;
+}
+
+function applyCityViewTexture(mesh) {
+  const textureLoader = new THREE.TextureLoader();
+  textureLoader.load(
+    CITY_VIEW_TEXTURE,
+    (texture) => {
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.flipY = false;
+      texture.needsUpdate = true;
+      mesh.material = new THREE.MeshBasicMaterial({
+        map: texture,
+        side: THREE.DoubleSide,
+        toneMapped: false,
+      });
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+    },
+    undefined,
+    (error) => console.warn(`[World] Could not load Night City window texture: ${CITY_VIEW_TEXTURE}`, error)
+  );
+}
+
 function addCityViewWindow(scene, { x, y, z, width, height }) {
+  const fallback = new THREE.Group();
+  fallback.name = "Window_CityView_Fallback";
+  scene.add(fallback);
   const textureLoader = new THREE.TextureLoader();
   textureLoader.load(
     CITY_VIEW_TEXTURE,
@@ -103,11 +177,12 @@ function addCityViewWindow(scene, { x, y, z, width, height }) {
       // the YZ wall plane and place it just inside the retained collider.
       view.rotation.y = Math.PI / 2;
       view.position.set(x, y, z);
-      scene.add(view);
+      fallback.add(view);
     },
     undefined,
     (error) => console.warn(`[World] Could not load Night City window texture: ${CITY_VIEW_TEXTURE}`, error)
   );
+  return fallback;
 }
 
 function metalMat(color, key, { rough = 0.4, metal = 0.75, emissive, emissiveIntensity = 1 } = {}) {
@@ -560,6 +635,7 @@ const ENV = "/models/environment";
 const ENV_MODEL = {
   lucyApartmentDecor: `${ENV}/lucy-apartment-decor.glb`,
   act2Facility: `${ENV}/act2-facility.glb`,
+  act3TrainingFacility: `${ENV}/act3-training-facility.glb`,
   world: `${ENV}/world.glb`,
 };
 
@@ -574,6 +650,29 @@ const ENV_MODEL = {
 function addSetDressing(scene, url, { anchor = [0, 0, 0], rotationY = 0, scale = 1 } = {}) {
   spawnAsset(url, { position: anchor, rotationY, scale }).then((inst) => {
     if (inst) scene.add(inst.root);
+  });
+}
+
+/** Loads the authored apartment directly into Act I and configures its window. */
+function addAct1Apartment(act1Group, cityViewFallback) {
+  spawnAsset(ENV_MODEL.lucyApartmentDecor, {
+    position: [0, 0, 3],
+    castShadow: true,
+    receiveShadow: true,
+  }).then((inst) => {
+    if (!inst) return;
+    let hasAuthoredCityView = false;
+    inst.root.traverse((node) => {
+      if (!node.isMesh) return;
+      node.castShadow = true;
+      node.receiveShadow = true;
+      if (node.name === "Window_CityView_Plane") {
+        hasAuthoredCityView = true;
+        applyCityViewTexture(node);
+      }
+    });
+    if (hasAuthoredCityView && cityViewFallback) cityViewFallback.visible = false;
+    act1Group.add(inst.root);
   });
 }
 
@@ -597,7 +696,9 @@ function addAct2Facility(act2Group, nameWallFallback) {
       }
       if (node.name === "Mission_NameWall_Backing" && node.isMesh) {
         hasAuthoredNameWall = true;
-        applyTextureMap(node, NAME_WALL_TEXTURE);
+        // The mission wall is now a precisely aligned independent plane.
+        // Hide any baked counterpart so it cannot overlap or depth-flicker.
+        node.visible = false;
       }
       if (node.isMesh && node.name.startsWith("Arasaka_Logo")) {
         applyStandardTextureMap(node, ARASAKA_LOGO_TEXTURE);
@@ -670,6 +771,7 @@ function addBloodNote(scene, { x, z, ry = 0, size = 0.62 }) {
   );
   mesh.rotation.set(-Math.PI / 2, 0, ry);
   mesh.position.set(x, 0.02, z);
+  mesh.name = "Objective_BloodNote_Paper";
   mesh.receiveShadow = true;
   scene.add(mesh);
   return mesh;
@@ -680,9 +782,10 @@ function addBloodNote(scene, { x, z, ry = 0, size = 0.62 }) {
  * (card + its own tiny glint light) so Game.js can hide the whole thing in
  * one call once Lucy pockets it.
  */
-function addAccessKey(scene, { x, z, ry = 0 }) {
+function addAccessKey(scene, { x, y = 0.82, z, ry = 0 }) {
   const group = new THREE.Group();
-  group.position.set(x, 0, z);
+  group.name = "Objective_ArasakaKey_Card";
+  group.position.set(x, y, z);
   group.rotation.y = ry;
   scene.add(group);
 
@@ -727,6 +830,7 @@ function addHiddenScrawl(scene, alarm, { x, y, z, ry = 0, w = 2.3, h = 1.15, key
   );
   mesh.position.set(x, y, z);
   mesh.rotation.y = ry;
+  mesh.name = "Objective_HiddenWallWriting_Backing";
   mesh.visible = false;
   scene.add(mesh);
   alarm.reveals.push(mesh);
@@ -750,6 +854,7 @@ export function createWorld(scene, cameraColliders = []) {
   const anchors = {};
   const act1Group = new THREE.Group();
   act1Group.name = "act1Group";
+  act1Group.visible = true;
   scene.add(act1Group);
   // Everything created for the facility (geometry, practical lights, props,
   // and story anchors) is parented here. It remains invisible until Act I is
@@ -758,13 +863,25 @@ export function createWorld(scene, cameraColliders = []) {
   act2Group.name = "act2Group";
   act2Group.visible = false;
   scene.add(act2Group);
-  const actGroups = { 1: act1Group, 2: act2Group };
+  const act3Group = new THREE.Group();
+  act3Group.name = "act3Group";
+  act3Group.visible = false;
+  scene.add(act3Group);
+  const actGroups = { 1: act1Group, 2: act2Group, 3: act3Group };
   const holograms = [];
   const flickerList = [];
   const crackleList = [];
   const blinkers = [];
   const props = {};
   const apartmentAlarm = createApartmentAlarm();
+
+  act1Group.add(new THREE.AmbientLight(0x2d0b3d, 1.4));
+  const bedMagenta = new THREE.PointLight(0xff007f, 1.2, 10);
+  bedMagenta.position.set(3.4, 2.5, 6.5);
+  act1Group.add(bedMagenta);
+  const deskCyan = new THREE.PointLight(0x00f5ff, 2.8, 12);
+  deskCyan.position.set(-2.4, 2.2, -0.5);
+  act1Group.add(deskCyan);
 
   // Lift the ambient fill just enough to keep room detail readable without
   // flattening the darker cyberpunk mood or competing with the neon lights.
@@ -790,7 +907,7 @@ export function createWorld(scene, cameraColliders = []) {
   const cyanRim = new THREE.DirectionalLight("#00f0ff", 1.25);
   cyanRim.position.set(-8, 7, -6);
   scene.add(cyanRim);
-  const magentaAccent = new THREE.PointLight("#ff007f", 7, 12, 2);
+  const magentaAccent = new THREE.PointLight("#ff007f", 2.4, 10, 2);
   magentaAccent.position.set(3.5, 3, 1.5);
   act1Group.add(magentaAccent);
   // This one sits inside the apartment, so it turns with the room — a magenta
@@ -837,7 +954,7 @@ export function createWorld(scene, cameraColliders = []) {
   // Keep the original box only as an interaction/collision anchor; the city
   // image below is the visible window surface.
   anchors.window.visible = false;
-  addCityViewWindow(act1Group, { x: -5.03, y: 2, z: 4, width: 3.05, height: 2.45 });
+  const cityViewFallback = addCityViewWindow(act1Group, { x: -5.03, y: 2, z: 4, width: 3.05, height: 2.45 });
   addNeonSign(act1Group, { x: -5.4, y: 2, z: 4, w: 2.6, h: 2, color: "#101a30", ry: Math.PI / 2, intensity: 2.4, distance: 6 });
 
   anchors.bed = addPropBox(act1Group, colliders, { x: 3.4, y: 0.35, z: 6.5, w: 2, h: 0.7, d: 3, color: "#332845", key: "bed" });
@@ -855,7 +972,7 @@ export function createWorld(scene, cameraColliders = []) {
   anchors.bloodNote = addBloodNote(act1Group, { x: 4.05, z: 8.45, ry: 0.42 });
   props.bloodNote = anchors.bloodNote;
 
-  anchors.accessKey = addAccessKey(act1Group, { x: -3.3, z: -0.85, ry: 0.5 });
+  anchors.accessKey = addAccessKey(act1Group, { x: -3.3, y: 0.82, z: -0.85, ry: 0.5 });
   props.accessKey = anchors.accessKey;
 
   // Same wall as the window but clear of its interaction radius, so the two
@@ -876,7 +993,7 @@ export function createWorld(scene, cameraColliders = []) {
   // Blender-made set dressing for the apartment (optional — see
   // client/public/models/environment/README.md). Anchored at the room's
   // floor center (x:0, z:3), matching addRoom's z1 center above.
-  addSetDressing(act1Group, ENV_MODEL.lucyApartmentDecor, { anchor: [0, 0, 3] });
+  addAct1Apartment(act1Group, cityViewFallback);
 
   // ================= ZONE 2 — ARASAKA FACILITY =================
   addRoom(act2Group, colliders, { x: 0, z: -26, w: 14, d: 42, color: "#181920", floorColor: "#101115", key: "z2" });
@@ -888,13 +1005,11 @@ export function createWorld(scene, cameraColliders = []) {
   addSecurityCamera(act2Group, { x: -6.2, y: 5, z: -14, ry: 0.5, modelUrl: MODEL.securityCamera });
   addSecurityCamera(act2Group, { x: 6.2, y: 5, z: -36, ry: -0.5, modelUrl: MODEL.securityCamera });
 
-  anchors.nameWall = addPropBox(act2Group, colliders, { x: -6.4, y: 1.5, z: -20, w: 0.3, h: 3, d: 5, color: "#20222e", key: "namewall" });
-  anchors.nameWall.name = "Mission_NameWall_Backing";
-  applyTextureMap(anchors.nameWall, NAME_WALL_TEXTURE);
-  addAct2Facility(act2Group, anchors.nameWall);
-  for (let i = 0; i < 5; i++) {
-    addDrawing(act2Group, { x: -6.55, y: 1.2 + (i % 2) * 0.4, z: -22 + i * 0.9, ry: Math.PI / 2, key: `namewall-mark-${i}`, scale: 0.28 });
-  }
+  addNameWall(act2Group);
+  // Interaction stays independent from the visual plane so its approach point
+  // remains stable if the authored facility geometry changes.
+  anchors.nameWall = new THREE.Vector3(-6.4, 1.5, -20.0);
+  addAct2Facility(act2Group, null);
   addWarningSign(act2Group, { x: -6.55, y: 2.6, z: -17.5, ry: Math.PI / 2, text: "SUBLEVEL 23" });
 
   anchors.securityTerminal = addPropBox(act2Group, colliders, { x: 5.4, y: 0.65, z: -34, w: 1, h: 1.3, d: 0.7, color: "#18e0e0", emissive: true, key: "secterm" });
@@ -932,23 +1047,34 @@ export function createWorld(scene, cameraColliders = []) {
   addDoorGate(act2Group, colliders, gates, "gate2", { x: 0, z: -46.6, w: 5, color: "#c94a3a" });
 
   // ================= ZONE 3 — TRAINING + MEMORY ROOM =================
-  addRoom(scene, colliders, { x: 0, z: -70, w: 16, d: 38, color: "#171522", floorColor: "#0e0c16", key: "z3" });
+  addRoom(act3Group, colliders, { x: 0, z: -70, w: 16, d: 38, color: "#171522", floorColor: "#0e0c16", key: "z3" });
   anchors.zone3Spawn = new THREE.Vector3(0, 0, -52);
+  anchors.trainingChairs = new THREE.Vector3(0, 1.6, -57.4);
+  anchors.memoryRoom = new THREE.Vector3(0, 0.6, -82.0);
+  act3Group.add(new THREE.AmbientLight(0x1a0933, 1.5));
+  addAct3TrainingFacility(act3Group);
 
-  for (let i = 0; i < 4; i++) addCeilingLight(scene, flickerList, { x: 0, z: -54 - i * 9, color: "#8a7fc0", intensity: 1.6, flicker: i === 1 });
+  for (let i = 0; i < 4; i++) addCeilingLight(act3Group, flickerList, { x: 0, z: -54 - i * 9, color: "#8a7fc0", intensity: 1.6, flicker: i === 1 });
 
-  anchors.trainingChairs = addPropBox(scene, colliders, { x: 0, y: 0.5, z: -60, w: 5, h: 1, d: 4, color: "#241f38", emissive: false, key: "chairsbase" });
+  const trainingChairs = addPropBox(act3Group, colliders, { x: 0, y: 0.5, z: -60, w: 5, h: 1, d: 4, color: "#241f38", emissive: false, key: "chairsbase" });
+  trainingChairs.name = "Training_Chairs_Base";
   for (const dx of [-2.2, -1.1, 0, 1.1, 2.2]) {
-    const chair = addPropBox(scene, colliders, { x: dx, y: 0.4, z: -61.5, w: 0.6, h: 0.8, d: 0.6, color: "#2a2440", collide: false, key: `chair-${dx}` });
+    const chair = addPropBox(act3Group, colliders, { x: dx, y: 0.4, z: -61.5, w: 0.6, h: 0.8, d: 0.6, color: "#2a2440", collide: false, key: `chair-${dx}` });
     const ledStrip = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.02, 0.02), neonMat("#7a2fff", 1.6));
     ledStrip.position.set(dx, 0.82, -61.2);
-    scene.add(ledStrip);
+    act3Group.add(ledStrip);
     void chair;
   }
-  addMonitor(scene, { x: 0, y: 1.6, z: -57.4, ry: Math.PI, key: "training-screen", title: "NEURAL SYNC", color: "#7a2fff", accent: "#f6c93a", standH: 0.55 });
-  addWarningSign(scene, { x: -7.62, y: 1.4, z: -60, ry: Math.PI / 2, text: "AUTH REQ." });
+  addMonitor(act3Group, { x: 0, y: 1.6, z: -57.4, ry: Math.PI, key: "training-screen", title: "NEURAL SYNC", color: "#7a2fff", accent: "#f6c93a", standH: 0.55 });
+  addWarningSign(act3Group, { x: -7.62, y: 1.4, z: -60, ry: Math.PI / 2, text: "AUTH REQ." });
+  const playbackSpot = new THREE.SpotLight(0x00f0ff, 3.5, 10);
+  playbackSpot.position.set(0, 4.5, -57.4);
+  playbackSpot.target.position.set(0, 1.6, -57.4);
+  playbackSpot.castShadow = false;
+  act3Group.add(playbackSpot, playbackSpot.target);
 
-  anchors.memoryRoom = addPropBox(scene, colliders, { x: 0, y: 0.6, z: -82, w: 1.6, h: 1.2, d: 1, color: "#18e0e0", emissive: true, key: "memroom" });
+  const memoryRoom = addPropBox(act3Group, colliders, { x: 0, y: 0.6, z: -82, w: 1.6, h: 1.2, d: 1, color: "#18e0e0", emissive: true, key: "memroom" });
+  memoryRoom.name = "Objective_Memory_GlowingCore_Fallback";
   const memChildren = [
     { hair: "#ff2fd0", jacket: "#ff2fd0", dx: -2 },
     { hair: "#f6e94a", jacket: "#f6e94a", dx: -0.7 },
@@ -956,18 +1082,20 @@ export function createWorld(scene, cameraColliders = []) {
     { hair: "#7a2fff", jacket: "#7a2fff", dx: 2 },
   ];
   for (const c of memChildren) {
-    holograms.push(addHologramFigure(scene, { x: c.dx, z: -85, hair: c.hair, jacket: c.jacket, ry: Math.PI }));
+    holograms.push(addHologramFigure(act3Group, { x: c.dx, z: -85, hair: c.hair, jacket: c.jacket, ry: Math.PI }));
   }
-  const memLight = new THREE.PointLight("#18e0e0", 3, 10, 2);
-  memLight.position.set(0, 2, -85);
-  scene.add(memLight);
+  const memLight = new THREE.PointLight(0x00e5ff, 4.5, 12, 2);
+  memLight.position.set(0, 1.5, -82);
+  act3Group.add(memLight);
+  flickerList.push({ light: memLight, owner: act3Group, base: 4.5, glowBase: 0, speed: 1.7, seed: 2.4, broken: false, siren: true });
 
-  addServerRack(scene, colliders, { x: 7.4, z: -68, key: "z3-a" });
-  addServerRack(scene, colliders, { x: -7.4, z: -76, key: "z3-b" });
-  addCable(scene, { from: [-7.4, 2, -76], to: [-7.4, 0.2, -70], sag: 0.15, radius: 0.03 });
-  addDebrisPatch(scene, { x: -2, z: -66, count: 10, radius: 1.6, seedOffset: 11 });
+  addServerRack(act3Group, colliders, { x: 7.4, z: -68, key: "z3-a" });
+  addServerRack(act3Group, colliders, { x: -7.4, z: -76, key: "z3-b" });
+  addCable(act3Group, { from: [-7.4, 2, -76], to: [-7.4, 0.2, -70], sag: 0.15, radius: 0.03 });
+  addDebrisPatch(act3Group, { x: -2, z: -66, count: 10, radius: 1.6, seedOffset: 11 });
+  addAct3SparkNode(act3Group, crackleList);
 
-  addDoorGate(scene, colliders, gates, "gate3", { x: 0, z: -88.6, w: 5.5, color: "#c94a3a" });
+  addDoorGate(act3Group, colliders, gates, "gate3", { x: 0, z: -88.6, w: 5.5, color: "#c94a3a" });
 
   // ================= ZONE 4 — FLASHBACK: THE ESCAPE (corridor) =================
   addRoom(scene, colliders, { x: 0, z: -110, w: 9, d: 34, color: "#241014", floorColor: "#180a0d", key: "z4" });
@@ -1069,6 +1197,39 @@ export function createWorld(scene, cameraColliders = []) {
       apartmentAlarm.active = true;
     },
   };
+}
+
+/** Loads the authored Act III environment through the shared GLTFLoader. */
+function addAct3TrainingFacility(act3Group) {
+  spawnAsset(ENV_MODEL.act3TrainingFacility, {
+    position: [0, 0, -70],
+    castShadow: true,
+    receiveShadow: true,
+  }).then((inst) => {
+    if (!inst) return;
+    inst.root.traverse((node) => {
+      if (!node.isMesh) return;
+      node.castShadow = true;
+      node.receiveShadow = true;
+      if (node.name === "Objective_Playback_Screen") node.userData.objectiveAnchor = "trainingChairs";
+      if (node.name === "Objective_Memory_GlowingCore") node.userData.objectiveAnchor = "memoryRoom";
+    });
+    act3Group.add(inst.root);
+  });
+}
+
+function addAct3SparkNode(group, crackleList) {
+  const sparkNode = new THREE.Group();
+  sparkNode.name = "Act3_Spark_Node";
+  sparkNode.position.set(-3.1, 2.15, -72.1);
+  group.add(sparkNode);
+  const glow = new THREE.Mesh(
+    new THREE.SphereGeometry(0.055, 8, 6),
+    new THREE.MeshBasicMaterial({ color: "#c084fc", transparent: true, opacity: 0 })
+  );
+  const light = new THREE.PointLight("#c084fc", 0, 4, 2);
+  sparkNode.add(glow, light);
+  crackleList.push({ owner: group, glow, light, nextBurst: 0, burstEnds: 0 });
 }
 
 function makeLightUpdater(flickerList, _blinkers, scene, apartmentAlarm, crackleList = []) {

@@ -193,6 +193,13 @@ export class Game {
       if (this.world.actGroups?.[2]) this.world.actGroups[2].visible = true;
       this.scene.fog = new THREE.FogExp2(0x0c0614, 0.045);
     }
+    if (act.key === 2) {
+      // The Act II exit gate is at (0, 3, -46.6); transition its facility
+      // out as the newly unlocked Act III training environment comes online.
+      if (this.world.actGroups?.[2]) this.world.actGroups[2].visible = false;
+      if (this.world.actGroups?.[3]) this.world.actGroups[3].visible = true;
+      this.scene.fog = new THREE.FogExp2(0x05020c, 0.038);
+    }
     this.network?.sendAct(act.key + 1);
     this.cb.onActComplete?.(act, false);
   }
