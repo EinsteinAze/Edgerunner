@@ -35,8 +35,9 @@ export const ACTS = {
         lines: [
           { speaker: NARR, text: "A small table cluttered with printed shard dumps — hex offsets, corrupted headers, whatever survived the recovery." },
           { speaker: L, text: '"...0x4F2A: fragment corrupt. 0x4F3E: fragment corrupt. Half of this is just noise."' },
-          { speaker: L, text: '"Come on, there has to be something left in here."' },
-          { speaker: NARR, text: "Lucy sighs and lets the sheet fall back onto the pile. Fragments of a life before all this, and none of them whole." },
+          { speaker: L, text: '"Wait — this one\'s clean. ACCESS CODE: {CODE}."' },
+          { speaker: L, text: '"...Better remember that."' },
+          { speaker: NARR, text: "Lucy sighs and lets the sheet fall back onto the pile. Fragments of a life before all this, and none of them whole — except one." },
         ],
       },
       {
@@ -118,6 +119,22 @@ export const ACTS = {
           { speaker: L, text: '"...Mara?"' },
         ],
       },
+      {
+        id: "gateDoor",
+        anchor: "gateDoor",
+        radius: 2.6,
+        trigger: "interact",
+        prompt: "Use the key on the door",
+        requires: ["cyberdeck"],
+        lockedPrompts: {
+          cyberdeck: "The door's lock needs power routed through the cyberdeck first",
+        },
+        lines: [
+          { speaker: NARR, text: "Lucy presses the scratched access key against the door's reader." },
+          { speaker: NARR, text: "The lock disengages with a heavy clunk." },
+          { speaker: L, text: '"Sublevel 23. Guess I\'m going back after all."' },
+        ],
+      },
     ],
     endTitle: "ACT I — THE MESSAGE",
     endMessage:
@@ -166,6 +183,9 @@ export const ACTS = {
         radius: 2,
         trigger: "interact",
         prompt: "Hack the security terminal",
+        // Gates the beat behind the Act I access code instead of playing the
+        // lines immediately — see Game._onBeatTrigger / submitTerminalCode.
+        requiresCode: true,
         lines: [
           { speaker: NARR, text: "A terminal still has power. Lucy hacks it." },
           { speaker: SCR, text: "ARASAKA INTERNAL PROGRAM — CHILD NETRUNNER DEVELOPMENT" },

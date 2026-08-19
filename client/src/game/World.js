@@ -306,8 +306,15 @@ function addMonitor(scene, { x, y, z, ry = 0, key, title, color = "#18e0e0", acc
   return group;
 }
 
-/** Office desk + chair, thematically dressed with clutter. */
-function addDesk(scene, colliders, { x, z, ry = 0, key }) {
+/**
+ * Office desk + chair, thematically dressed with clutter. `rgb: true` adds a
+ * hue-cycling LED strip along the desk's back edge (push its `{ mat, light,
+ * seed }` entry into `rgbList` and animate it from `makeLightUpdater`) and
+ * upgrades the two-box chair into a proper gaming chair with armrests and a
+ * headrest — used for the Act I cyberdeck desk. Plain `addDesk` calls (e.g.
+ * the Act II security desk) are unaffected.
+ */
+function addDesk(scene, colliders, { x, z, ry = 0, key, rgb = false, rgbList }) {
   const topMat = metalMat("#1c1a22", `desk:${key}`, { rough: 0.5, metal: 0.2 });
   addBox(scene, colliders, { w: 1.3, h: 0.06, d: 0.65, x, y: 0.78, z, mat: topMat, ry });
   const legMat = metalMat("#101014", `desklegs:${key}`, { rough: 0.4, metal: 0.6 });
@@ -316,12 +323,61 @@ function addDesk(scene, colliders, { x, z, ry = 0, key }) {
     const wz = z + lx * Math.sin(ry) + lz * Math.cos(ry);
     addBox(scene, colliders, { w: 0.05, h: 0.78, d: 0.05, x: wx, y: 0.39, z: wz, mat: legMat, collide: false });
   }
+
+  if (rgb) {
+    // Slim LED bar along the back edge (opposite the chair) plus a matching
+    // bounce light — both hue-cycled per frame by the pushed rgbList entry.
+    const localX = 0.66;
+    const wx = x + localX * Math.cos(ry);
+    const wz = z + localX * Math.sin(ry);
+    const stripMat = new THREE.MeshStandardMaterial({ color: "#000000", emissive: "#ff2fd0", emissiveIntensity: 1.3, roughness: 0.5 });
+    const strip = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.04, 0.58), stripMat);
+    strip.position.set(wx, 0.8, wz);
+    strip.rotation.y = ry;
+    scene.add(strip);
+    // Kept a little clear of the desk surface and low-intensity — this close,
+    // physically-correct inverse-square falloff blows out a reflective
+    // tabletop fast (the same trap the data-sheet paper hit).
+    const glow = new THREE.PointLight("#ff2fd0", 0.5, 2.2, 2);
+    glow.position.set(wx, 1.05, wz);
+    scene.add(glow);
+    if (rgbList) rgbList.push({ mat: stripMat, light: glow, seed: Math.random() * 10 });
+  }
+
   // chair
   const chairMat = metalMat("#22242e", `chair:${key}`, { rough: 0.6, metal: 0.2 });
   const seatX = x - 0.5 * Math.cos(ry);
   const seatZ = z - 0.5 * Math.sin(ry);
   addBox(scene, colliders, { w: 0.4, h: 0.06, d: 0.4, x: seatX, y: 0.46, z: seatZ, mat: chairMat, ry, collide: false });
   addBox(scene, colliders, { w: 0.4, h: 0.5, d: 0.06, x: seatX - 0.2 * Math.cos(ry), z: seatZ - 0.2 * Math.sin(ry), y: 0.72, mat: chairMat, ry, collide: false });
+
+  if (rgb) {
+    // Armrests, a taller headrest cap, and a 5-point wheelbase — a "proper"
+    // chair instead of the plain seat + backrest plate used elsewhere.
+    const armMat = metalMat("#2b2e3a", `chairarm:${key}`, { rough: 0.55, metal: 0.35 });
+    for (const side of [-1, 1]) {
+      const lx = -0.02 + side * 0.22;
+      const ax = seatX + lx * Math.cos(ry) - 0 * Math.sin(ry);
+      const az = seatZ + lx * Math.sin(ry) + 0 * Math.cos(ry);
+      addBox(scene, colliders, { w: 0.05, h: 0.05, d: 0.34, x: ax, y: 0.66, z: az, mat: armMat, ry, collide: false });
+      addBox(scene, colliders, { w: 0.05, h: 0.22, d: 0.05, x: ax, y: 0.55, z: az - 0.14 * Math.sin(ry + Math.PI / 2), mat: armMat, ry, collide: false });
+    }
+    addBox(scene, colliders, {
+      w: 0.4, h: 0.14, d: 0.07,
+      x: seatX - 0.2 * Math.cos(ry), z: seatZ - 0.2 * Math.sin(ry),
+      y: 1.0, mat: chairMat, ry, collide: false,
+    });
+    const baseMat = metalMat("#0c0d12", `chairbase:${key}`, { rough: 0.4, metal: 0.7 });
+    addBox(scene, colliders, { w: 0.06, h: 0.4, d: 0.06, x: seatX, y: 0.23, z: seatZ, mat: baseMat, collide: false });
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * Math.PI * 2;
+      addBox(scene, colliders, {
+        w: 0.05, h: 0.03, d: 0.16,
+        x: seatX + Math.cos(a) * 0.1, z: seatZ + Math.sin(a) * 0.1,
+        y: 0.05, mat: baseMat, ry: a, collide: false,
+      });
+    }
+  }
 }
 
 /**
@@ -330,9 +386,12 @@ function addDesk(scene, colliders, { x, z, ry = 0, key }) {
  * `addDesk`'s top-plate + 4-leg composition, just smaller, with a scatter of
  * paper planes (see `addBloodNote`) lying flat across the top instead of a
  * chair. Returns a group so callers can use it directly as a position anchor
- * (`anchor.position` — see Interactables.js).
+ * (`anchor.position` — see Interactables.js). When `code` is given, it's
+ * baked into one of the sheets as a legible "ACCESS CODE" callout (see
+ * `dataSheetTexture`) — the random per-session code needed at the Act II
+ * security terminal.
  */
-function addDataShardTable(scene, colliders, { x, z, ry = 0, key }) {
+function addDataShardTable(scene, colliders, { x, z, ry = 0, key, code }) {
   const group = new THREE.Group();
   group.position.set(x, 0, z);
   group.rotation.y = ry;
@@ -355,7 +414,7 @@ function addDataShardTable(scene, colliders, { x, z, ry = 0, key }) {
     group.add(leg);
   }
 
-  const sheetMat = (i) => new THREE.MeshStandardMaterial({ map: dataSheetTexture(`${key}:${i}`), color: "#b0ab98", roughness: 0.95, metalness: 0, side: THREE.DoubleSide });
+  const sheetMat = (i) => new THREE.MeshStandardMaterial({ map: dataSheetTexture(`${key}:${i}`, i === 2 ? { code } : undefined), color: "#b0ab98", roughness: 0.95, metalness: 0, side: THREE.DoubleSide });
   const sheets = [
     { dx: -0.08, dz: -0.05, rot: 0.18, w: 0.26, h: 0.32 },
     { dx: 0.1, dz: 0.06, rot: -0.3, w: 0.24, h: 0.3 },
@@ -785,6 +844,14 @@ function addHiddenScrawl(scene, alarm, { x, y, z, ry = 0, w = 2.3, h = 1.15, key
 // world
 // ---------------------------------------------------------------------------
 
+/** A fresh 6-character hex access code, regenerated every game start — read off the Act I data shards, needed at the Act II security terminal. */
+function generateAccessCode() {
+  const hex = "0123456789ABCDEF";
+  let code = "";
+  for (let i = 0; i < 6; i++) code += hex[Math.floor(Math.random() * 16)];
+  return code;
+}
+
 /**
  * Builds the six connected story zones for "The Children of Arasaka":
  * Apartment -> Facility -> Training Room -> Flashback Corridor -> Archive -> Data Core.
@@ -811,6 +878,10 @@ export function createWorld(scene, cameraColliders = []) {
   const flickerList = [];
   const crackleList = [];
   const blinkers = [];
+  const rgbList = [];
+  // Regenerated every time the game starts — read off the Act I data shards,
+  // required to hack the Act II security terminal.
+  const securityCode = generateAccessCode();
   const props = {};
   const apartmentAlarm = createApartmentAlarm();
 
@@ -890,11 +961,11 @@ export function createWorld(scene, cameraColliders = []) {
 
   anchors.bed = addPropBox(act1Group, colliders, { x: 3.4, y: 0.35, z: 6.5, w: 2, h: 0.7, d: 3, color: "#332845", key: "bed" });
   addBox(act1Group, colliders, { w: 2, h: 0.15, d: 0.8, x: 3.4, y: 0.78, z: 5.3, mat: metalMat("#443458", "pillow", { rough: 0.8, metal: 0 }), collide: false });
-  anchors.dataShards = addDataShardTable(act1Group, colliders, { x: 3.6, z: 3.2, ry: 0.3, key: "shards" });
+  anchors.dataShards = addDataShardTable(act1Group, colliders, { x: 3.6, z: 3.2, ry: 0.3, key: "shards", code: securityCode });
   anchors.cyberdeck = addPropBox(act1Group, colliders, { x: -2.4, y: 0.55, z: -1, w: 1.4, h: 1.1, d: 0.8, color: "#ff2fd0", emissive: true, key: "cyberdeck" });
   addMonitor(act1Group, { x: -2.4, y: 1.1, z: -1.42, ry: Math.PI, key: "cyberdeck-screen", title: "NET-ACCESS", color: "#ff2fd0", accent: "#18e0e0", standH: 0.4 });
   anchors.mainDesk = new THREE.Vector3(-2.4, 0, -0.5);
-  addDesk(act1Group, colliders, { x: -2.4, z: -0.5, ry: 0, key: "apt-desk" });
+  addDesk(act1Group, colliders, { x: -2.4, z: -0.5, ry: 0, key: "apt-desk", rgb: true, rgbList });
 
   // --- Act I objective props -------------------------------------------------
   // Note by the bed -> key under the desk -> writing that only the red light
@@ -920,6 +991,9 @@ export function createWorld(scene, cameraColliders = []) {
   addCable(act1Group, { from: [-2.4, 0.9, -1.4], to: [-4.8, 0.1, -3.5], sag: 0.3 });
 
   addDoorGate(act1Group, colliders, gates, "gate1", { x: 0, z: -4.6, w: 4, color: "#c94a3a" });
+  // Lets a story beat target the door directly (Lucy uses the access key on
+  // it to unlock the way into Act II) — same mesh `unlockGate` animates.
+  anchors.gateDoor = gates.gate1;
 
   // Blender-made set dressing for the apartment (optional — see
   // client/public/models/environment/README.md). Anchored at the room's
@@ -1112,14 +1186,15 @@ export function createWorld(scene, cameraColliders = []) {
     actGroups,
     act2Group,
     holograms,
-    updateLights: makeLightUpdater(flickerList, blinkers, scene, apartmentAlarm, crackleList),
+    securityCode,
+    updateLights: makeLightUpdater(flickerList, blinkers, scene, apartmentAlarm, crackleList, rgbList),
     triggerApartmentAlarm: () => {
       apartmentAlarm.active = true;
     },
   };
 }
 
-function makeLightUpdater(flickerList, _blinkers, scene, apartmentAlarm, crackleList = []) {
+function makeLightUpdater(flickerList, _blinkers, scene, apartmentAlarm, crackleList = [], rgbList = []) {
   const isVisible = (object) => {
     for (let node = object; node; node = node.parent) if (!node.visible) return false;
     return true;
@@ -1129,8 +1204,15 @@ function makeLightUpdater(flickerList, _blinkers, scene, apartmentAlarm, crackle
     if (o.userData?.blink) blinkMeshes.push(o);
   });
   let t = 0;
+  const rgbColor = new THREE.Color();
   return function updateLights(dt) {
     t += dt;
+    for (const rgb of rgbList) {
+      const hue = ((t * 0.15 + rgb.seed) % 1 + 1) % 1;
+      rgbColor.setHSL(hue, 1, 0.55);
+      rgb.mat.emissive.copy(rgbColor);
+      rgb.light.color.copy(rgbColor);
+    }
     for (const f of flickerList) {
       if (!isVisible(f.owner)) continue;
       if (f.siren) {

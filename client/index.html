@@ -91,6 +91,10 @@
           <div class="objective" id="hud-objective">Objective: —</div>
         </div>
         <div class="hud-top-right" id="hud-roster"></div>
+        <div class="inventory-box hidden" id="hud-inventory">
+          <div class="inventory-title">INVENTORY</div>
+          <ul id="inventory-list"></ul>
+        </div>
         <div class="crosshair"></div>
         <div class="prompt hidden" id="hud-prompt"><kbd>E</kbd> <span id="hud-prompt-text"></span></div>
         <div class="hud-toast hidden" id="hud-toast"></div>
@@ -98,6 +102,15 @@
           <div class="dialogue-speaker" id="dialogue-speaker"></div>
           <div class="dialogue-text" id="dialogue-text"></div>
           <div class="dialogue-hint" id="dialogue-hint">[E] Continue</div>
+        </div>
+        <div class="terminal-box hidden" id="hud-terminal">
+          <div class="terminal-title">ARASAKA SECURITY — ACCESS CODE REQUIRED</div>
+          <form id="terminal-form">
+            <input id="terminal-input" maxlength="8" autocomplete="off" placeholder="ENTER ACCESS CODE" />
+          </form>
+          <div class="terminal-error hidden" id="terminal-error">ACCESS DENIED</div>
+          <div class="terminal-success hidden" id="terminal-success">ACCESS GRANTED</div>
+          <div class="terminal-hint">Enter: Submit &nbsp;•&nbsp; Esc: Cancel</div>
         </div>
         <div class="chat-log" id="chat-log"></div>
         <form id="chat-form" class="chat-form hidden">

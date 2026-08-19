@@ -14,6 +14,9 @@ import { Waypoint } from "./Waypoint.js";
 const GATE_FOR_ACT = { 1: "gate1", 2: "gate2", 3: "gate3", 4: "gate4", 5: "gate5" };
 const SPAWN_FOR_ACT = { 1: "spawn", 2: "zone2Spawn", 3: "zone3Spawn", 4: "zone4Spawn", 5: "zone5Spawn", 6: "zone6Spawn" };
 const ROMAN = { 1: "I", 2: "II", 3: "III", 4: "IV", 5: "V", 6: "VI" };
+// Which beat a carried item is used at — lets the inventory panel trigger the
+// same beat E-interact would, once the player is in range.
+const ITEM_USE_BEAT = { accessKey: "gateDoor" };
 
 export class Game {
   constructor(canvas, callbacks = {}) {
@@ -25,8 +28,10 @@ export class Game {
     this.paused = false;
     this.dialogueActive = false;
     this._activeBeat = null;
+    this._pendingCodeBeat = null;
     this._lastGateWarning = 0;
     this._apartmentAlarmFired = false;
+    this.inventory = [];
 
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 300);
@@ -120,7 +125,49 @@ export class Game {
     this._activeBeat = beat;
     this.dialogueActive = true;
     this.input.releasePointerLock();
-    this.dialogue.play(beat.lines);
+    if (beat.requiresCode) {
+      this._pendingCodeBeat = beat;
+      this.input.setChatActive(true);
+      this.cb.onTerminalPrompt?.(true);
+      return;
+    }
+    this.dialogue.play(this._resolveLines(beat.lines));
+  }
+
+  /** Swaps the `{CODE}` token for the session's random security code (see World.js's `generateAccessCode`). */
+  _resolveLines(lines) {
+    const code = this.world.securityCode;
+    if (!code) return lines;
+    return lines.map((l) => (l.text.includes("{CODE}") ? { ...l, text: l.text.replace("{CODE}", code) } : l));
+  }
+
+  /** Called by the UI when the player submits the Act II terminal password prompt. */
+  submitTerminalCode(value) {
+    const beat = this._pendingCodeBeat;
+    if (!beat) return;
+    const ok = String(value || "").trim().toUpperCase() === this.world.securityCode;
+    this.cb.onTerminalResult?.(ok);
+    if (!ok) return;
+    this._pendingCodeBeat = null;
+    this._removeInventoryItem("code");
+    // Let "ACCESS GRANTED" hold on screen for a beat before the terminal
+    // panel gives way to the hack dialogue.
+    setTimeout(() => {
+      this.input.setChatActive(false);
+      this.cb.onTerminalPrompt?.(false);
+      this.dialogue.play(this._resolveLines(beat.lines));
+    }, 650);
+  }
+
+  /** Called by the UI when the player backs out of the terminal prompt (Esc) without solving it. */
+  cancelTerminalPrompt() {
+    if (!this._pendingCodeBeat) return;
+    this._pendingCodeBeat = null;
+    this.dialogueActive = false;
+    this._activeBeat = null;
+    this.input.setChatActive(false);
+    this.interactables.clearPending();
+    this.cb.onTerminalPrompt?.(false);
   }
 
   _onDialogueDone() {
@@ -153,8 +200,57 @@ export class Game {
     if (key === "accessKey") {
       const prop = this.world.props?.accessKey;
       if (prop) prop.visible = false;
+      this._addInventoryItem("accessKey", "ARASAKA KEY");
+    }
+    if (key === "dataShards") {
+      this._addInventoryItem("code", `ACCESS CODE: ${this.world.securityCode}`);
+    }
+    // The key's last job is the door out — drop it from the list once used.
+    if (key === "gateDoor") {
+      this._removeInventoryItem("accessKey");
     }
     this._maybeTriggerApartmentAlarm();
+  }
+
+  _addInventoryItem(id, label) {
+    if (this.inventory.some((i) => i.id === id)) return;
+    this.inventory.push({ id, label });
+    this._refreshInventory();
+  }
+
+  _removeInventoryItem(id) {
+    const idx = this.inventory.findIndex((i) => i.id === id);
+    if (idx < 0) return;
+    this.inventory.splice(idx, 1);
+    this._refreshInventory();
+  }
+
+  _refreshInventory() {
+    this.cb.onInventory?.(this.inventory.map((i) => ({ id: i.id, label: i.label })));
+  }
+
+  /**
+   * Called by the UI when the player clicks a carried item — an alternate to
+   * walking up and pressing E. Only fires the beat if the player is actually
+   * in range of wherever that item is used (same radius the E-prompt uses),
+   * so it can't be used from across the room.
+   */
+  useInventoryItem(id) {
+    if (this.dialogueActive || this.paused) return;
+    const beatId = ITEM_USE_BEAT[id];
+    const beat = beatId && this.story.beat(beatId);
+    if (!beat || this.story.isObjectiveDone(beat.id) || !this.story.isBeatUnlocked(beat)) {
+      this.cb.onError?.("Nothing to use that on right now.");
+      return;
+    }
+    const anchor = this.world.anchors[beat.anchor];
+    const pos = anchor?.position || anchor;
+    const dist = pos && Math.hypot(this.player.position.x - pos.x, this.player.position.z - pos.z);
+    if (dist == null || dist > beat.radius) {
+      this.cb.onError?.("You need to be closer to use that here.");
+      return;
+    }
+    this._onBeatTrigger(beat);
   }
 
   /**

@@ -348,9 +348,14 @@ export function drawingTexture(key) {
   });
 }
 
-/** A printed sheet of dumped shard data — hex offsets and garbled fragments, curling at the edges. */
-export function dataSheetTexture(key) {
-  return memo(`datasheet:${key}`, () => {
+/**
+ * A printed sheet of dumped shard data — hex offsets and garbled fragments,
+ * curling at the edges. When `code` is given, one row of the dump is
+ * replaced with a boxed, legible "ACCESS CODE" callout — the random
+ * per-session security code the player needs to remember for Act II.
+ */
+export function dataSheetTexture(key, { code } = {}) {
+  return memo(`datasheet:${key}:${code || ""}`, () => {
     const size = 256;
     const cv = canvas(size);
     const ctx = cv.getContext("2d");
@@ -377,9 +382,21 @@ export function dataSheetTexture(key) {
     ctx.globalAlpha = 1;
 
     const hex = "0123456789ABCDEF";
+    const codeRow = code ? 4 + Math.floor(rnd() * 8) : -1;
     ctx.font = "9px monospace";
     for (let i = 0; i < 14; i++) {
       const y = 38 + i * 14;
+      if (i === codeRow) {
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = "#9a1414";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(8, y - 10, 150, 13);
+        ctx.fillStyle = "#9a1414";
+        ctx.font = "bold 9px monospace";
+        ctx.fillText(`ACCESS CODE: ${code}`, 12, y);
+        ctx.font = "9px monospace";
+        continue;
+      }
       ctx.fillStyle = rnd() > 0.85 ? "#9a1414" : "#2a2a2a";
       ctx.globalAlpha = 0.6 + rnd() * 0.4;
       let addr = "";

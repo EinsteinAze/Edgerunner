@@ -113,6 +113,9 @@ function startGame(existingPlayers = []) {
     onActComplete: (act, isFinal) => showActScreen(act, isFinal),
     onDialogueLine: (line, isLast) => showDialogueLine(line, isLast),
     onError: (text) => showToast(text),
+    onTerminalPrompt: (open) => showTerminal(open),
+    onTerminalResult: (ok) => showTerminalResult(ok),
+    onInventory: (items) => renderInventory(items),
   });
   game.init(cosmetics, network, existingPlayers);
   hudVisible = true;
@@ -143,6 +146,59 @@ function showDialogueLine(line, isLast) {
   el("dialogue-speaker").textContent = line.speaker || "";
   el("dialogue-text").textContent = line.text;
   el("dialogue-hint").textContent = isLast ? "[E] Close" : "[E] Continue";
+}
+
+const terminalForm = el("terminal-form");
+const terminalInput = el("terminal-input");
+const terminalError = el("terminal-error");
+const terminalSuccess = el("terminal-success");
+
+function showTerminal(open) {
+  const box = el("hud-terminal");
+  if (open) {
+    box.classList.remove("hidden");
+    terminalError.classList.add("hidden");
+    terminalSuccess.classList.add("hidden");
+    terminalInput.disabled = false;
+    terminalInput.value = "";
+    terminalInput.focus();
+  } else {
+    box.classList.add("hidden");
+    terminalInput.blur();
+  }
+}
+function showTerminalResult(ok) {
+  if (ok) {
+    terminalError.classList.add("hidden");
+    terminalSuccess.classList.remove("hidden");
+    terminalInput.disabled = true;
+    return;
+  }
+  terminalError.classList.remove("hidden");
+  terminalInput.value = "";
+  terminalInput.focus();
+}
+terminalForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  game?.submitTerminalCode(terminalInput.value);
+});
+
+function renderInventory(items) {
+  const box = el("hud-inventory");
+  const list = el("inventory-list");
+  list.innerHTML = "";
+  if (!items || items.length === 0) {
+    box.classList.add("hidden");
+    return;
+  }
+  box.classList.remove("hidden");
+  for (const item of items) {
+    const li = document.createElement("li");
+    li.textContent = item.label;
+    li.title = "Click to use";
+    li.addEventListener("click", () => game?.useInventoryItem(item.id));
+    list.appendChild(li);
+  }
 }
 
 function appendChat(name, text) {
@@ -186,6 +242,12 @@ window.addEventListener("keydown", (e) => {
     closeChat();
     return;
   }
+  const terminalOpen = !el("hud-terminal").classList.contains("hidden");
+  if (terminalOpen) {
+    game?.cancelTerminalPrompt();
+    showTerminal(false);
+    return;
+  }
   if (!screens.act.classList.contains("hidden")) return;
   const isPaused = !screens.pause.classList.contains("hidden");
   if (isPaused) {
@@ -210,6 +272,7 @@ window.addEventListener("keydown", (e) => {
   if (codeFromEvent(e) !== "Enter" || !hudVisible) return;
   if (!screens.pause.classList.contains("hidden")) return;
   if (!screens.act.classList.contains("hidden")) return;
+  if (!el("hud-terminal").classList.contains("hidden")) return;
   const chatOpen = !chatForm.classList.contains("hidden");
   if (!chatOpen) {
     openChat();

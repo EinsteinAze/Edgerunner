@@ -227,6 +227,33 @@ kbd {
   padding: 0.4rem 0.7rem;
 }
 
+/* Persistent carried-item list — separate from the transient dialogue/toast
+   lines so the access code and key stay visible after the line scrolls by. */
+.inventory-box {
+  position: absolute; top: 5.4rem; right: 1.1rem;
+  min-width: 9rem;
+  background: rgba(4, 5, 9, 0.55);
+  backdrop-filter: blur(8px);
+  border-left: 2px solid var(--neon-cyan);
+  padding: 0.5rem 0.7rem;
+  font-size: 0.72rem;
+  pointer-events: auto;
+}
+.inventory-title {
+  font-family: "Orbitron", sans-serif;
+  color: var(--neon-cyan);
+  font-size: 0.62rem;
+  letter-spacing: 1.5px;
+  margin-bottom: 0.3rem;
+}
+#inventory-list { list-style: none; display: flex; flex-direction: column; gap: 0.2rem; }
+#inventory-list li {
+  color: var(--text); letter-spacing: 0.5px; cursor: pointer;
+  padding: 0.15rem 0.3rem; margin: 0 -0.3rem; border-radius: 2px;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+#inventory-list li:hover { background: rgba(24, 224, 224, 0.15); color: var(--neon-cyan); }
+
 .crosshair {
   position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
   width: 5px; height: 5px; border-radius: 50%;
@@ -267,6 +294,52 @@ kbd {
   max-width: min(80vw, 520px);
   animation: promptIn 0.18s ease both;
 }
+
+/* Act II security terminal — blocks input like the dialogue box, but is a
+   real prompt (typed answer, retryable) rather than a read-and-advance line. */
+.terminal-box {
+  position: absolute;
+  top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: min(360px, 86vw);
+  background: rgba(6, 7, 13, 0.78);
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  border: 1px solid var(--neon-cyan);
+  box-shadow: 0 0 30px rgba(24, 224, 224, 0.25), 0 12px 40px rgba(0, 0, 0, 0.5);
+  padding: 1rem 1.25rem;
+  pointer-events: auto;
+  text-align: center;
+  animation: dialogueIn 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.terminal-title {
+  font-family: "Orbitron", sans-serif;
+  color: var(--neon-cyan);
+  font-size: 0.7rem;
+  letter-spacing: 1.5px;
+  margin-bottom: 0.75rem;
+}
+.terminal-box input {
+  width: 100%; background: rgba(6, 7, 13, 0.7); backdrop-filter: blur(10px); border: 1px solid var(--neon-cyan);
+  color: var(--text); padding: 0.55rem 0.7rem; font-family: "Share Tech Mono", monospace;
+  letter-spacing: 3px; text-align: center; text-transform: uppercase;
+  outline: none;
+}
+/* `promptIn` assumes `left: 50%; position: absolute` (see `.prompt`/`.hud-toast`)
+   — its translateX(-50%) would shift a plain centered block like this one off
+   to the left instead of centering it, so denied/granted get their own
+   vertical-only keyframe. */
+@keyframes terminalMessageIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.terminal-error,
+.terminal-success {
+  font-size: 0.75rem; letter-spacing: 1px; margin-top: 0.6rem; text-align: center;
+  animation: terminalMessageIn 0.15s ease both;
+}
+.terminal-error { color: #ffb4bb; }
+.terminal-success { color: var(--neon-cyan); }
+.terminal-hint { color: var(--neon-cyan); font-size: 0.68rem; margin-top: 0.6rem; opacity: 0.75; }
 
 .chat-log {
   position: absolute; bottom: 4.5rem; left: 1.25rem;
