@@ -2,15 +2,13 @@ import { Game } from "./game/Game.js";
 import { Network } from "./net/Network.js";
 import { codeFromEvent } from "./game/Input.js";
 import { preloadCharacterAsset } from "./game/CharacterLoader.js";
+import { CyberpunkMusic } from "./game/CyberpunkMusic.js";
 
 // Kick off the (optional) character.glb fetch as early as possible so it has
 // a head start — by the time the player clicks through login/menu to Play,
 // it's very likely already resolved and the GLB (if present) becomes the
 // primary character with no pop-in swap. Never blocks the UI either way.
 preloadCharacterAsset();
-
-const HAIR_COLORS = ["#ff2fd0", "#18e0e0", "#f6e94a", "#7a2fff", "#ff5c3d"];
-const JACKET_COLORS = ["#18e0e0", "#ff2fd0", "#3a3f52", "#f6e94a", "#ff5c3d"];
 
 const el = (id) => document.getElementById(id);
 const screens = {
@@ -31,32 +29,21 @@ function hide(name) {
   screens[name].classList.add("hidden");
 }
 
-let cosmetics = { name: "RUNNER", hair: HAIR_COLORS[0], jacket: JACKET_COLORS[0] };
-
-function buildSwatches(containerId, colors, onPick) {
-  const container = el(containerId);
-  colors.forEach((c, i) => {
-    const sw = document.createElement("div");
-    sw.className = "swatch" + (i === 0 ? " selected" : "");
-    sw.style.background = c;
-    sw.style.color = c;
-    sw.addEventListener("click", () => {
-      container.querySelectorAll(".swatch").forEach((n) => n.classList.remove("selected"));
-      sw.classList.add("selected");
-      onPick(c);
-    });
-    container.appendChild(sw);
-  });
-}
-buildSwatches("swatch-hair", HAIR_COLORS, (c) => (cosmetics.hair = c));
-buildSwatches("swatch-jacket", JACKET_COLORS, (c) => (cosmetics.jacket = c));
+// Stable defaults are retained for the character and network payload; the title
+// screen intentionally has no appearance-customisation controls.
+let cosmetics = { name: "RUNNER", hair: "#ff2fd0", jacket: "#18e0e0" };
 
 window.addEventListener("DOMContentLoaded", () => {
   hide("loading");
-  show("login");
+  // Start at the JACK IN menu; a runner handle is optional and no longer
+  // needs a separate identity-entry screen.
+  show("menu");
+  el("menu-welcome").textContent = "Night City is waiting.";
+  network.connect().then(updatePlayersOnline);
 });
 
 const network = new Network();
+const music = new CyberpunkMusic();
 let game = null;
 let hudVisible = false;
 let chatEntries = 0;
@@ -89,11 +76,13 @@ el("btn-credits-back").addEventListener("click", () => show("menu"));
 
 el("btn-play").addEventListener("click", async () => {
   for (const s of Object.values(screens)) s.classList.add("hidden");
+  if (!network.connected) await network.connect();
   const { players } = await network.join(cosmetics);
   startGame(players);
 });
 
 function startGame(existingPlayers = []) {
+  music.start();
   const canvas = el("scene");
   game = new Game(canvas, {
     onPrompt: (text) => {
@@ -192,6 +181,7 @@ window.addEventListener("keydown", (e) => {
     resumeGame();
   } else {
     game?.setPaused(true);
+    music.setPaused(true);
     screens.pause.classList.remove("hidden");
   }
 });
@@ -199,6 +189,7 @@ window.addEventListener("keydown", (e) => {
 function resumeGame() {
   screens.pause.classList.add("hidden");
   game?.setPaused(false);
+  music.setPaused(false);
 }
 el("btn-resume").addEventListener("click", resumeGame);
 el("btn-quit").addEventListener("click", () => location.reload());

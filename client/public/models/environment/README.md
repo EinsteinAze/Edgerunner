@@ -4,7 +4,26 @@ This folder is prepared for room-scale architectural pieces (walls,
 corridor sections, structural set-dressing) — as opposed to `../props/`,
 which holds smaller reused objects (racks, terminals, cameras, crates).
 
-## Current status: reserved, not yet wired
+## Additive set-dressing (wired up)
+
+Drop **`lucy-apartment-decor.glb`** in this folder and it's loaded
+automatically and added into Zone 1 (Lucy's apartment), anchored at the
+room's floor center. This is purely additive — it doesn't hide or replace
+any procedural geometry or collider, it just adds your model on top. If the
+file isn't there, nothing happens (no gap, no error).
+
+Model it in real-world meters, and place everything relative to Blender's
+world origin `(0,0,0)` — that point maps to the center of the apartment
+floor in-game. Export via `File → Export → glTF 2.0`, format `glTF Binary
+(.glb)`, with "Selected Objects" and "Apply Modifiers" checked.
+
+See `World.js`'s `addSetDressing()` / `ENV_MODEL` for the code, and
+`AssetLoader.js`'s `spawnAsset()` for the underlying loader. To add more
+anchors elsewhere (e.g. a second decoration pass in another zone), add
+another `ENV_MODEL` entry and another `addSetDressing(scene, url, { anchor })`
+call at the relevant zone.
+
+## Wall swaps: reserved, not yet wired
 
 Unlike the prop swaps (server racks, terminals, security cameras,
 containers, consoles — see `../props/README.md`), **no room/wall geometry

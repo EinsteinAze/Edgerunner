@@ -198,7 +198,18 @@ export class Game {
       // out as the newly unlocked Act III training environment comes online.
       if (this.world.actGroups?.[2]) this.world.actGroups[2].visible = false;
       if (this.world.actGroups?.[3]) this.world.actGroups[3].visible = true;
-      this.scene.fog = new THREE.FogExp2(0x05020c, 0.038);
+      this.scene.fog = new THREE.FogExp2(0x06030c, 0.038);
+    }
+    if (act.key >= 3 && nextActGroup) {
+      // Authored late-game zones are loaded as separate groups so only the
+      // active act is rendered. This keeps the larger Blender environments
+      // out of the render and shadow passes until the player reaches them.
+      const currentActGroup = this.world.actGroups?.[act.key];
+      if (currentActGroup) currentActGroup.visible = false;
+      nextActGroup.visible = true;
+    }
+    if (act.key === 5) {
+      this.scene.fog = new THREE.FogExp2(0x030712, 0.025);
     }
     this.network?.sendAct(act.key + 1);
     this.cb.onActComplete?.(act, false);

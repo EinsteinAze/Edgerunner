@@ -140,9 +140,9 @@ export const ACTS = {
       {
         id: "nameWall",
         anchor: "nameWall",
-        radius: 2.6,
+        radius: 2.8,
         trigger: "interact",
-        prompt: "Read the names on the wall",
+        prompt: "Read Names",
         lines: [
           { speaker: NARR, text: "Five names are scratched into the wall: LUCY · MARA · NOAH · SERA · KIAN." },
           { speaker: NARR, text: "Lucy touches Mara's name. A memory surfaces." },

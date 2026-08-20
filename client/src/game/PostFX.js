@@ -12,7 +12,7 @@ const GradeShader = {
     tDiffuse: { value: null },
     time: { value: 0 },
     vignetteStrength: { value: 0.32 },
-    grainStrength: { value: 0.016 },
+    grainStrength: { value: 0.002 },
     // Story-driven red bleed (Act I's apartment) plus a one-shot white flash
     // for the instant the lighting turns over. Both idle at 0.
     redWash: { value: 0 },
@@ -81,7 +81,7 @@ export class PostFX {
     this.time = 0;
 
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.9;
+    renderer.toneMappingExposure = 0.85;
 
     this.composer = new EffectComposer(renderer);
     this.composer.addPass(new RenderPass(scene, camera));
